@@ -57,7 +57,7 @@ class AlgoliaAPI:
             
             # Configurar parámetros de búsqueda
             search_params = {
-                "page": page, 
+                "offset": page * hits_per_page, 
                 "hitsPerPage": hits_per_page
             }
             
@@ -110,7 +110,7 @@ class AlgoliaAPI:
             
             # Configurar parámetros de búsqueda
             search_params = {
-                "page": page, 
+                "offset": page * hits_per_page, 
                 "hitsPerPage": hits_per_page
             }
             
@@ -163,7 +163,7 @@ class AlgoliaAPI:
             
             # Configurar parámetros de búsqueda
             search_params = {
-                "page": page, 
+                "offset": page * hits_per_page, 
                 "hitsPerPage": hits_per_page
             }
             

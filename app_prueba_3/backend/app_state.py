@@ -743,6 +743,144 @@ class AppState(rx.State):
             import traceback
             traceback.print_exc()
 
+    @rx.event
+    async def load_more_certs(self):
+        """Carga más certificados para scroll infinito"""
+        if self.is_loading_more:
+            print("⏳ Ya se están cargando más certificados...")
+            return
+            
+        try:
+            self.is_loading_more = True
+            print(f"📄 Cargando más certificados (página {self.certs_page + 1})")
+            
+            # Verificar si hay una búsqueda activa
+            has_search = bool(self.values.get("search_value", ""))
+            
+            if has_search:
+                # Preparar filtros para Algolia
+                filters = {}
+                if self.values.get("client", ""):
+                    filters["client"] = self.values["client"]
+                
+                # Buscar siguiente página con Algolia
+                algolia_results = await algolia_api.search_certs(
+                    self.values["search_value"],
+                    page=self.certs_page + 1,
+                    hits_per_page=20,
+                    area=self.user_data.current_area,
+                    filters=filters
+                )
+                
+                if algolia_results and algolia_results.get('hits'):
+                    # Convertir y agregar nuevos resultados
+                    new_certs = [algolia_to_certs(hit) for hit in algolia_results['hits']]
+                    self.certs_show.extend(new_certs)
+                    self.certs_page += 1
+                    self.total_certs = algolia_results.get('nbHits', 0)
+                    print(f"✅ Se cargaron {len(new_certs)} certificados más (total: {len(self.certs_show)})")
+                else:
+                    print("📄 No hay más certificados para cargar")
+            else:
+                print("⚠️  Carga de más datos sin búsqueda no implementada aún")
+                
+        except Exception as e:
+            print(f"❌ Error al cargar más certificados: {e}")
+        finally:
+            self.is_loading_more = False
+
+    @rx.event
+    async def load_more_fams(self):
+        """Carga más familias para scroll infinito"""
+        if self.is_loading_more:
+            print("⏳ Ya se están cargando más familias...")
+            return
+            
+        try:
+            self.is_loading_more = True
+            print(f"📄 Cargando más familias (página {self.fams_page + 1})")
+            
+            # Verificar si hay una búsqueda activa
+            has_search = bool(self.values.get("search_value", ""))
+            
+            if has_search:
+                # Preparar filtros para Algolia
+                filters = {}
+                if self.values.get("client", ""):
+                    filters["client"] = self.values["client"]
+                
+                # Buscar siguiente página con Algolia
+                algolia_results = await algolia_api.search_fams(
+                    self.values["search_value"],
+                    page=self.fams_page + 1,
+                    hits_per_page=20,
+                    area=self.user_data.current_area,
+                    filters=filters
+                )
+                
+                if algolia_results and algolia_results.get('hits'):
+                    # Convertir y agregar nuevos resultados
+                    new_fams = [algolia_to_fam(hit) for hit in algolia_results['hits']]
+                    self.fams_show.extend(new_fams)
+                    self.fams_page += 1
+                    self.total_fams = algolia_results.get('nbHits', 0)
+                    print(f"✅ Se cargaron {len(new_fams)} familias más (total: {len(self.fams_show)})")
+                else:
+                    print("📄 No hay más familias para cargar")
+            else:
+                print("⚠️  Carga de más datos sin búsqueda no implementada aún")
+                
+        except Exception as e:
+            print(f"❌ Error al cargar más familias: {e}")
+        finally:
+            self.is_loading_more = False
+
+    @rx.event
+    async def load_more_cots(self):
+        """Carga más cotizaciones para scroll infinito"""
+        if self.is_loading_more:
+            print("⏳ Ya se están cargando más cotizaciones...")
+            return
+            
+        try:
+            self.is_loading_more = True
+            print(f"📄 Cargando más cotizaciones (página {self.cots_page + 1})")
+            
+            # Verificar si hay una búsqueda activa
+            has_search = bool(self.values.get("search_value", ""))
+            
+            if has_search:
+                # Preparar filtros para Algolia
+                filters = {}
+                if self.values.get("client", ""):
+                    filters["client"] = self.values["client"]
+                
+                # Buscar siguiente página con Algolia
+                algolia_results = await algolia_api.search_cots(
+                    self.values["search_value"],
+                    page=self.cots_page + 1,
+                    hits_per_page=20,
+                    area=self.user_data.current_area,
+                    filters=filters
+                )
+                
+                if algolia_results and algolia_results.get('hits'):
+                    # Convertir y agregar nuevos resultados
+                    new_cots = [algolia_to_cot(hit) for hit in algolia_results['hits']]
+                    self.cots_show.extend(new_cots)
+                    self.cots_page += 1
+                    self.total_cots = algolia_results.get('nbHits', 0)
+                    print(f"✅ Se cargaron {len(new_cots)} cotizaciones más (total: {len(self.cots_show)})")
+                else:
+                    print("📄 No hay más cotizaciones para cargar")
+            else:
+                print("⚠️  Carga de más datos sin búsqueda no implementada aún")
+                
+        except Exception as e:
+            print(f"❌ Error al cargar más cotizaciones: {e}")
+        finally:
+            self.is_loading_more = False
+
     def logout(self):
         """Cierra sesión del usuario"""
         print("👋 Cerrando sesión...")

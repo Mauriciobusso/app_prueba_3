@@ -122,6 +122,31 @@ def table_certificados()->rx.Component:
             size="3",
             width="100%",
         ),
+        # Botón para cargar más resultados
+        rx.cond(
+            AppState.values["search_value"] != "",
+            rx.vstack(
+                rx.cond(
+                    AppState.is_loading_more,
+                    rx.spinner(size="2"),
+                    rx.button(
+                        "📄 Cargar más certificados",
+                        on_click=AppState.load_more_certs,
+                        variant="outline",
+                        size="2",
+                        width="200px",
+                    )
+                ),
+                rx.text(
+                    f"Mostrando {AppState.certs_show.length()} de {AppState.total_certs} certificados",
+                    size="2",
+                    color="gray"
+                ),
+                spacing="2",
+                align="center",
+                padding="20px"
+            )
+        ),
         width="100%",
     )
 
@@ -187,6 +212,31 @@ def table_familias()->rx.Component:
             variant="surface",
             size="1",
         ),
+        # Botón para cargar más resultados
+        rx.cond(
+            AppState.values["search_value"] != "",
+            rx.vstack(
+                rx.cond(
+                    AppState.is_loading_more,
+                    rx.spinner(size="2"),
+                    rx.button(
+                        "📄 Cargar más familias",
+                        on_click=AppState.load_more_fams,
+                        variant="outline",
+                        size="2",
+                        width="200px",
+                    )
+                ),
+                rx.text(
+                    f"Mostrando {AppState.fams_show.length()} de {AppState.total_fams} familias",
+                    size="2",
+                    color="gray"
+                ),
+                spacing="2",
+                align="center",
+                padding="20px"
+            )
+        ),
         width="100%",
     )
    
@@ -247,6 +297,31 @@ def table_cotizaciones()->rx.Component:
             variant="surface",
             size="1",
             width="100%",
+        ),
+        # Botón para cargar más resultados
+        rx.cond(
+            AppState.values["search_value"] != "",
+            rx.vstack(
+                rx.cond(
+                    AppState.is_loading_more,
+                    rx.spinner(size="2"),
+                    rx.button(
+                        "💼 Cargar más cotizaciones",
+                        on_click=AppState.load_more_cots,
+                        variant="outline",
+                        size="2",
+                        width="200px",
+                    )
+                ),
+                rx.text(
+                    f"Mostrando {AppState.cots_show.length()} de {AppState.total_cots} cotizaciones",
+                    size="2",
+                    color="gray"
+                ),
+                spacing="2",
+                align="center",
+                padding="20px"
+            )
         ),
         width="100%",
     )
