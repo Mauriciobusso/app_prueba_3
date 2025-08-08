@@ -90,7 +90,9 @@ def table_certificados()->rx.Component:
                 ),
             ),
             rx.table.body(
-                rx.foreach(AppState.certs_show, lambda cert: rx.table.row(
+                rx.cond(
+                    AppState.certs_show.length() > 0,
+                    rx.foreach(AppState.certs_show, lambda cert: rx.table.row(
                     rx.table.cell(f"{cert.num}-{cert.year}"),
                     rx.cond(cert.rev!="00",
                         rx.table.cell(f"Rev.{cert.rev}"),
@@ -117,34 +119,45 @@ def table_certificados()->rx.Component:
                     },
                     align="center",
                 )),
+                    # Mostrar mensaje cuando no hay resultados
+                    rx.table.row(
+                        rx.table.cell(
+                            rx.text("Ningún resultado encontrado", 
+                                   style={"font-style": "italic", "color": "gray"}),
+                            col_span=7,
+                            text_align="center",
+                            padding="20px"
+                        )
+                    )
+                )
             ),
             variant="surface",
             size="3",
             width="100%",
         ),
-        # Botón para cargar más resultados
+        # Indicador de scroll infinito  
         rx.cond(
             AppState.values["search_value"] != "",
             rx.vstack(
                 rx.cond(
                     AppState.is_loading_more,
-                    rx.spinner(size="2"),
-                    rx.button(
-                        "📄 Cargar más certificados",
-                        on_click=AppState.load_more_certs,
-                        variant="outline",
+                    rx.hstack(
+                        rx.spinner(size="2"),
+                        rx.text("Cargando más...", size="2", color="gray"),
+                        spacing="2",
+                        align="center"
+                    ),
+                    rx.text(
+                        f"📜 {AppState.certs_show.length()} certificados • Scroll hacia abajo para cargar más",
                         size="2",
-                        width="200px",
+                        color="gray",
+                        text_align="center"
                     )
-                ),
-                rx.text(
-                    f"Mostrando {AppState.certs_show.length()} de {AppState.total_certs} certificados",
-                    size="2",
-                    color="gray"
                 ),
                 spacing="2",
                 align="center",
-                padding="20px"
+                padding="20px",
+                width="100%"
             )
         ),
         width="100%",
@@ -184,7 +197,9 @@ def table_familias()->rx.Component:
                 ),
             ),
             rx.table.body(
-                rx.foreach(AppState.fams_show, lambda fam: rx.table.row(
+                rx.cond(
+                    AppState.fams_show.length() > 0,
+                    rx.foreach(AppState.fams_show, lambda fam: rx.table.row(
                     rx.table.cell(fam.rubro, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}),
                     rx.table.cell(fam.subrubro, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}),
                     rx.table.cell(fam.client, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}),
@@ -208,6 +223,17 @@ def table_familias()->rx.Component:
                     },
                     align="center",
                 )),
+                    # Mostrar mensaje cuando no hay resultados
+                    rx.table.row(
+                        rx.table.cell(
+                            rx.text("Ningún resultado encontrado", 
+                                   style={"font-style": "italic", "color": "gray"}),
+                            col_span=9,
+                            text_align="center",
+                            padding="20px"
+                        )
+                    )
+                )
             ),
             variant="surface",
             size="1",
@@ -272,7 +298,9 @@ def table_cotizaciones()->rx.Component:
                 ),
             ),
             rx.table.body(
-                rx.foreach(AppState.cots_show, lambda cot: rx.table.row(
+                rx.cond(
+                    AppState.cots_show.length() > 0,
+                    rx.foreach(AppState.cots_show, lambda cot: rx.table.row(
                     rx.table.cell(cot.num + '-' + cot.year, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}), #1
                     rx.table.cell(format_date_component(cot.issuedate),
                                     style={"white-space": "nowrap", "overflow": "hidden", "text-overflow": "ellipsis"}), #2
@@ -293,6 +321,17 @@ def table_cotizaciones()->rx.Component:
                     },
                     align="center",
                 )),
+                    # Mostrar mensaje cuando no hay resultados
+                    rx.table.row(
+                        rx.table.cell(
+                            rx.text("Ningún resultado encontrado", 
+                                   style={"font-style": "italic", "color": "gray"}),
+                            col_span=5,
+                            text_align="center",
+                            padding="20px"
+                        )
+                    )
+                )
             ),
             variant="surface",
             size="1",

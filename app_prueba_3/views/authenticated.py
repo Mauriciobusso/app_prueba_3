@@ -12,21 +12,12 @@ def certificados_view() -> rx.Component:
         rx.hstack(
             rx.vstack(
                 rx.cond(
-                    AppState.certs_show.length() == 0,
-                    rx.vstack(
-                        rx.cond(
-                            AppState.certs.length() == 0,
-                            rx.spinner(size = "2", 
-                                    loading = True,
-                                    color_scheme="white",   
-                            ),
-                            rx.button("Cargar Certificados",      
-                                on_click = AppState.update_certs_show
-                            ),
-                        ),
-                        spacing="2"
+                    AppState.certs.length() == 0,
+                    rx.spinner(size = "2", 
+                            loading = True,
+                            color="white",   
                     ),
-                    table_certificados(),
+                    table_certificados(),  # Siempre mostrar la tabla cuando hay datos cargados
                 ),
                 width="100%",
             ),
@@ -46,6 +37,7 @@ def certificados_view() -> rx.Component:
         padding_top="0.5em",
         display="flex",  # Habilita flexbox
         flex_direction="column",
+        on_scroll=lambda: AppState.on_scroll_throttled(),  # Scroll infinito con throttling
     )
 
 def familias_view() -> rx.Component:
@@ -55,21 +47,12 @@ def familias_view() -> rx.Component:
         rx.hstack(
             rx.vstack(
                 rx.cond(
-                    AppState.fams_show.length() == 0,
-                    rx.vstack(
-                        rx.cond(
-                            AppState.fams.length() == 0,
-                            rx.spinner(size = "2", 
-                                    loading = True,
-                                    color_scheme="white",   
-                            ),
-                            rx.button("Cargar Familias",      
-                                on_click = AppState.update_fams_show
-                            ),
-                        ),
-                        spacing="2"
+                    AppState.fams.length() == 0,
+                    rx.spinner(size = "2", 
+                            loading = True,
+                            color_scheme="white",   
                     ),
-                    table_familias(),
+                    table_familias(),  # Siempre mostrar la tabla cuando hay datos cargados
                 ),
                 width="100%",
             ),
@@ -89,6 +72,7 @@ def familias_view() -> rx.Component:
         padding_top="0.5em",
         display="flex",  # Habilita flexbox
         flex_direction="column",
+        on_scroll=lambda: AppState.on_scroll_throttled(),  # Scroll infinito con throttling
     )
 
 def cotizaciones_view() -> rx.Component:
@@ -98,22 +82,12 @@ def cotizaciones_view() -> rx.Component:
         rx.hstack(
             rx.vstack(
                 rx.cond(
-                    AppState.cots_show.length() == 0,
-                    rx.vstack(
-                        rx.cond(
-                            AppState.cots.length() == 0,
-                            rx.spinner(size = "2", 
-                                    loading = True,
-                                    color_scheme="white",   
-                            ),
-                            rx.button("Cargar Cotizaciones",      
-                                on_click = AppState.update_cots_show,
-                                variant="soft"
-                            ),
-                        ),
-                        spacing="2"
+                    AppState.cots.length() == 0,
+                    rx.spinner(size = "2", 
+                            loading = True,
+                            color_scheme="white",   
                     ),
-                    table_cotizaciones(),
+                    table_cotizaciones(),  # Siempre mostrar la tabla cuando hay datos cargados
                 ),
                 width="100%",
             ),
@@ -133,4 +107,5 @@ def cotizaciones_view() -> rx.Component:
         padding_top="0.5em",
         display="flex",  # Habilita flexbox
         flex_direction="column",
+        on_scroll=lambda: AppState.on_scroll_throttled(),  # Scroll infinito con throttling
     )

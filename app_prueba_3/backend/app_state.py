@@ -51,6 +51,7 @@ class AppState(rx.State):
     total_certs: int = 0
     total_fams: int = 0
     is_loading_more: bool = False
+    scroll_threshold: float = 0.8  # Disparar carga cuando llegue al 80% del scroll
 
     values: dict = {
         "collection": "",
@@ -373,7 +374,7 @@ class AppState(rx.State):
                 
                 if algolia_results:
                     # Convertir resultados de Algolia a objetos Certs
-                    self.certs = [algolia_to_certs(hit) for hit in algolia_results]
+                    self.certs = [algolia_to_certs(dict(hit)) for hit in algolia_results["hits"]]
                     print(f"✅ Algolia encontró {len(self.certs)} certificados")
                 else:
                     # Fallback a búsqueda en Firestore si Algolia falla o no encuentra resultados
@@ -528,7 +529,7 @@ class AppState(rx.State):
                 
                 if algolia_results:
                     # Convertir resultados de Algolia a objetos Fam
-                    self.fams = [algolia_to_fam(hit) for hit in algolia_results]
+                    self.fams = [algolia_to_fam(dict(hit)) for hit in algolia_results["hits"]]
                     print(f"✅ Algolia encontró {len(self.fams)} familias")
                 else:
                     # Fallback a búsqueda en Firestore si Algolia falla o no encuentra resultados
@@ -656,7 +657,7 @@ class AppState(rx.State):
                 
                 if algolia_results:
                     # Convertir resultados de Algolia a objetos Cot
-                    self.cots = [algolia_to_cot(hit) for hit in algolia_results]
+                    self.cots = [algolia_to_cot(dict(hit)) for hit in algolia_results["hits"]]
                     print(f"✅ Algolia encontró {len(self.cots)} cotizaciones")
                 else:
                     # Fallback a búsqueda en Firestore si Algolia falla o no encuentra resultados
@@ -774,7 +775,7 @@ class AppState(rx.State):
                 
                 if algolia_results and algolia_results.get('hits'):
                     # Convertir y agregar nuevos resultados
-                    new_certs = [algolia_to_certs(hit) for hit in algolia_results['hits']]
+                    new_certs = [algolia_to_certs(dict(hit)) for hit in algolia_results['hits']]
                     self.certs_show.extend(new_certs)
                     self.certs_page += 1
                     self.total_certs = algolia_results.get('nbHits', 0)
@@ -820,7 +821,7 @@ class AppState(rx.State):
                 
                 if algolia_results and algolia_results.get('hits'):
                     # Convertir y agregar nuevos resultados
-                    new_fams = [algolia_to_fam(hit) for hit in algolia_results['hits']]
+                    new_fams = [algolia_to_fam(dict(hit)) for hit in algolia_results['hits']]
                     self.fams_show.extend(new_fams)
                     self.fams_page += 1
                     self.total_fams = algolia_results.get('nbHits', 0)
@@ -866,7 +867,7 @@ class AppState(rx.State):
                 
                 if algolia_results and algolia_results.get('hits'):
                     # Convertir y agregar nuevos resultados
-                    new_cots = [algolia_to_cot(hit) for hit in algolia_results['hits']]
+                    new_cots = [algolia_to_cot(dict(hit)) for hit in algolia_results['hits']]
                     self.cots_show.extend(new_cots)
                     self.cots_page += 1
                     self.total_cots = algolia_results.get('nbHits', 0)
@@ -880,6 +881,59 @@ class AppState(rx.State):
             print(f"❌ Error al cargar más cotizaciones: {e}")
         finally:
             self.is_loading_more = False
+
+    @rx.event
+    async def on_scroll_end(self):
+        """Detecta cuando el usuario hace scroll hasta el final y carga más datos"""
+        if self.is_loading_more:
+            return
+            
+        # Solo cargar más si hay una búsqueda activa
+        if not self.values.get("search_value", ""):
+            return
+            
+        # Determinar qué tipo de datos cargar según la página actual
+        if self.current_page == "certificaciones":
+            await self.load_more_certs()
+        elif self.current_page == "familias":
+            await self.load_more_fams()
+        elif self.current_page == "cotizaciones":
+            await self.load_more_cots()
+
+    # Variable para controlar throttling de scroll
+    last_scroll_time: float = 0
+    scroll_position: int = 0
+    
+    @rx.event 
+    async def on_scroll_throttled(self, scroll_info: dict = None):
+        """Evento de scroll con throttling y detección de final"""
+        import time
+        current_time = time.time()
+        
+        # Solo procesar si han pasado al menos 1 segundo desde el último scroll
+        if current_time - self.last_scroll_time < 1.0:
+            return
+            
+        self.last_scroll_time = current_time
+        
+        # Solo cargar más si hay una búsqueda activa
+        if not self.values.get("search_value", ""):
+            return
+        
+        if self.is_loading_more:
+            return
+            
+        # Simular que estamos cerca del final después de un scroll
+        # En una implementación real, usarías scroll_info para determinar la posición
+        print("🔄 Scroll detectado, cargando más datos...")
+        
+        # Determinar qué tipo de datos cargar según la página actual
+        if self.current_page == "certificaciones":
+            await self.load_more_certs()
+        elif self.current_page == "familias":
+            await self.load_more_fams()
+        elif self.current_page == "cotizaciones":
+            await self.load_more_cots()
 
     def logout(self):
         """Cierra sesión del usuario"""

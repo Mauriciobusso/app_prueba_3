@@ -55,12 +55,6 @@ class AlgoliaAPI:
             from algoliasearch.search.client import SearchClientSync
             sync_client = SearchClientSync(self.app_id, self.search_key)
             
-            # Configurar parámetros de búsqueda
-            search_params = {
-                "offset": page * hits_per_page, 
-                "hitsPerPage": hits_per_page
-            }
-            
             # Agregar filtros si se proporcionan
             algolia_filters = []
             if area:
@@ -70,21 +64,20 @@ class AlgoliaAPI:
                     algolia_filters.append(f"{key}:{value}")
             
             if algolia_filters:
-                search_params["filters"] = " AND ".join(algolia_filters)
-                print(f"🔍 Filtros aplicados: {search_params['filters']}")
+                print(f"🔍 Filtros aplicados: {' AND '.join(algolia_filters)}")
             
             results = sync_client.search_single_index(
-                "cotizaciones", 
-                query,
-                search_params
+                index_name="cotizaciones", 
+                search_params={
+                    "query": query,
+                    "page": page,
+                    "hitsPerPage": hits_per_page,
+                    **({} if not algolia_filters else {"filters": " AND ".join(algolia_filters)})
+                }
             )
             
-            if isinstance(results, dict):
-                print(f"🔍 Algolia encontró {results.get('nbHits', 0)} cotizaciones para '{query}'")
-                return results
-            else:
-                print(f"⚠️  Respuesta inesperada: {type(results)}")
-                return {}
+            print(f"🔍 Algolia encontró {results.nb_hits} cotizaciones para '{query}'")
+            return {"hits": results.hits, "nbHits": results.nb_hits, "page": results.page, "nbPages": results.nb_pages, "hitsPerPage": results.hits_per_page}
                 
         except Exception as e:
             print(f"❌ Error en búsqueda de Algolia (cotizaciones): {e}")
@@ -108,12 +101,6 @@ class AlgoliaAPI:
             from algoliasearch.search.client import SearchClientSync
             sync_client = SearchClientSync(self.app_id, self.search_key)
             
-            # Configurar parámetros de búsqueda
-            search_params = {
-                "offset": page * hits_per_page, 
-                "hitsPerPage": hits_per_page
-            }
-            
             # Agregar filtros si se proporcionan
             algolia_filters = []
             if area:
@@ -123,21 +110,20 @@ class AlgoliaAPI:
                     algolia_filters.append(f"{key}:{value}")
             
             if algolia_filters:
-                search_params["filters"] = " AND ".join(algolia_filters)
-                print(f"🔍 Filtros aplicados: {search_params['filters']}")
+                print(f"🔍 Filtros aplicados: {' AND '.join(algolia_filters)}")
             
             results = sync_client.search_single_index(
-                "certificados", 
-                query,
-                search_params
+                index_name="certificados", 
+                search_params={
+                    "query": query,
+                    "page": page,
+                    "hitsPerPage": hits_per_page,
+                    **({} if not algolia_filters else {"filters": " AND ".join(algolia_filters)})
+                }
             )
             
-            if isinstance(results, dict):
-                print(f"🔍 Algolia encontró {results.get('nbHits', 0)} certificados para '{query}'")
-                return results
-            else:
-                print(f"⚠️  Respuesta inesperada: {type(results)}")
-                return {}
+            print(f"🔍 Algolia encontró {results.nb_hits} certificados para '{query}'")
+            return {"hits": results.hits, "nbHits": results.nb_hits, "page": results.page, "nbPages": results.nb_pages, "hitsPerPage": results.hits_per_page}
             
         except Exception as e:
             print(f"❌ Error en búsqueda de Algolia (certificados): {e}")
@@ -161,12 +147,6 @@ class AlgoliaAPI:
             from algoliasearch.search.client import SearchClientSync
             sync_client = SearchClientSync(self.app_id, self.search_key)
             
-            # Configurar parámetros de búsqueda
-            search_params = {
-                "offset": page * hits_per_page, 
-                "hitsPerPage": hits_per_page
-            }
-            
             # Agregar filtros si se proporcionan
             algolia_filters = []
             if area:
@@ -176,21 +156,20 @@ class AlgoliaAPI:
                     algolia_filters.append(f"{key}:{value}")
             
             if algolia_filters:
-                search_params["filters"] = " AND ".join(algolia_filters)
-                print(f"🔍 Filtros aplicados: {search_params['filters']}")
+                print(f"🔍 Filtros aplicados: {' AND '.join(algolia_filters)}")
             
             results = sync_client.search_single_index(
-                "familias", 
-                query,
-                search_params
+                index_name="familias", 
+                search_params={
+                    "query": query,
+                    "page": page,
+                    "hitsPerPage": hits_per_page,
+                    **({} if not algolia_filters else {"filters": " AND ".join(algolia_filters)})
+                }
             )
             
-            if isinstance(results, dict):
-                print(f"🔍 Algolia encontró {results.get('nbHits', 0)} familias para '{query}'")
-                return results
-            else:
-                print(f"⚠️  Respuesta inesperada: {type(results)}")
-                return {}
+            print(f"🔍 Algolia encontró {results.nb_hits} familias para '{query}'")
+            return {"hits": results.hits, "nbHits": results.nb_hits, "page": results.page, "nbPages": results.nb_pages, "hitsPerPage": results.hits_per_page}
             
         except Exception as e:
             print(f"❌ Error en búsqueda de Algolia (familias): {e}")
