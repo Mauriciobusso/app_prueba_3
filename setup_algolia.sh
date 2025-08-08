@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Script para configurar Algolia
+# Ejecutar este script después de crear una cuenta en Algolia
+
+echo "🚀 Configuración de Algolia para búsquedas optimizadas"
+echo "================================================="
+echo ""
+echo "Para configurar Algolia, necesitas:"
+echo "1. Crear una cuenta en https://www.algolia.com/"
+echo "2. Obtener tus credenciales del dashboard"
+echo "3. Configurar las variables de entorno"
+echo ""
+echo "Agrega estas líneas a tu archivo .env:"
+echo ""
+echo "# Algolia Configuration"
+echo "ALGOLIA_APP_ID=tu_app_id_aqui"
+echo "ALGOLIA_API_KEY=tu_admin_api_key_aqui" 
+echo "ALGOLIA_SEARCH_API_KEY=tu_search_api_key_aqui"
+echo ""
+echo "⚠️  IMPORTANTE:"
+echo "- ALGOLIA_API_KEY debe tener permisos de escritura (para indexar datos)"
+echo "- ALGOLIA_SEARCH_API_KEY solo necesita permisos de búsqueda (más seguro)"
+echo ""
+echo "📋 Pasos para obtener las credenciales:"
+echo "1. Ir a https://www.algolia.com/ y crear cuenta"
+echo "2. Crear una nueva aplicación"
+echo "3. Ir a API Keys en el dashboard"
+echo "4. Copiar Application ID, Admin API Key, y Search-Only API Key"
+echo ""
+echo "🔧 Una vez configurado, la aplicación usará Algolia automáticamente"
+echo "   Si Algolia no está disponible, usará Firestore como respaldo"

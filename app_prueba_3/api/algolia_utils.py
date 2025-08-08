@@ -1,0 +1,95 @@
+"""
+Utilidades para Algolia - conversión de datos
+"""
+from ..utils import Cot, Certs, Fam,  completar_con_ceros
+from typing import List, Dict
+
+def cot_to_algolia(cot: Cot) -> Dict:
+    """Convierte un objeto Cot a formato Algolia"""
+    return {
+        "objectID": f"cot_{cot.num}_{cot.area}",
+        "num": cot.num,
+        "client": cot.client,
+        "description": getattr(cot, 'description', ''),
+        "issuedate": cot.issuedate,
+        "issuedate_timestamp": getattr(cot, 'issuedate_timestamp', 0),
+        "status": getattr(cot, 'status', ''),
+        "area": cot.area,
+        "type": "cotizacion"
+    }
+
+def certs_to_algolia(cert: Certs) -> Dict:
+    """Convierte un objeto Certs a formato Algolia"""
+    return {
+        "objectID": f"cert_{cert.num}_{cert.year}_{cert.area}",
+        "num": cert.num,
+        "year": cert.year,
+        "client": cert.client,
+        "issuedate": cert.issuedate,
+        "status": getattr(cert, 'status', ''),
+        "area": cert.area,
+        "type": "certificado"
+    }
+
+def fam_to_algolia(fam: Fam) -> Dict:
+    """Convierte un objeto Fam a formato Algolia"""
+    return {
+        "objectID": f"fam_{fam.family}_{fam.area}",
+        "family": fam.family,
+        "razonsocial": fam.razonsocial,
+        "expirationdate": fam.expirationdate,
+        "description": getattr(fam, 'description', ''),
+        "area": fam.area,
+        "type": "familia"
+    }
+
+def algolia_to_cot(hit: Dict) -> Cot:
+    """Convierte un resultado de Algolia a objeto Cot"""
+    return Cot(
+        num=completar_con_ceros(hit.get('number', ''),4),
+        year=completar_con_ceros(hit.get('year', ''),2),
+        client=hit.get('razonsocial', ''),
+        client_id=hit.get('client', ''),
+        consultora=hit.get('consultora', ''),
+        issuedate=hit.get('issuedate', ''),
+        issuedate_timestamp=hit.get('issuedate_timestamp', 0),
+        status=hit.get('estado', ''),
+        area=hit.get('area', ''),
+        id=hit.get('objectID', ''),
+        drive_file_id=hit.get('drive_file_id', ''),
+        drive_file_id_signed=hit.get('drive_file_id_signed', ''),
+        drive_aprobacion_id=hit.get('drive_aprobacion_id', ''),
+        drive_aceptacion_id=hit.get('drive_aceptacion_id', ''),
+        enviada_fecha=hit.get('enviada_fecha', ''), 
+        facturada_fecha=hit.get('facturada_fecha', ''),
+        facturar=hit.get('facturar', ''),
+        nombre=hit.get('nombre', ''),
+        email=hit.get('email', ''),
+        ot=hit.get('ot', ''),
+        rev=hit.get('rev', ''),
+        resolucion=hit.get('resolucion', ''),
+        cuenta=hit.get('cuenta', '')
+    )
+
+def algolia_to_certs(hit: Dict) -> Certs:
+    """Convierte un resultado de Algolia a objeto Certs"""
+    return Certs(
+        num=hit.get('num', ''),
+        client=hit.get('client', ''),
+        description=hit.get('description', ''),
+        issuedate=hit.get('issuedate', ''),
+        issuedate_timestamp=hit.get('issuedate_timestamp', 0),
+        status=hit.get('status', ''),
+        area=hit.get('area', '')
+    )
+    
+
+def algolia_to_fam(hit: Dict) -> Fam:
+    """Convierte un resultado de Algolia a objeto Fam"""
+    return Fam(
+        family=hit.get('family', ''),
+        razonsocial=hit.get('razonsocial', ''),
+        expirationdate=hit.get('expirationdate', ''),
+        description=hit.get('description', ''),
+        area=hit.get('area', '')
+    )

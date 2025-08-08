@@ -1,0 +1,5 @@
+reflex>=0.6.4
+firebase_admin
+python-dotenv
+reflex-nav-menu
+reflex-calendar
