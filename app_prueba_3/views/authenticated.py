@@ -1,111 +1,102 @@
 import reflex as rx
 from ..views.navbar import navbar
 from ..components.components import table_certificados, table_familias, table_cotizaciones
-
 from ..backend.app_state import AppState
+from ..styles.colors import Color
+from ..styles.style import container_style
 
 
 def certificados_view() -> rx.Component:
-    """Vista de usuario autenticado"""
+    """Vista de certificados - Estilo Bureau Veritas"""
     return rx.box(
-        navbar(title="02 Certificados"),
-        rx.hstack(
+        navbar(title="Certificados"),
+        rx.box(
             rx.vstack(
                 rx.cond(
-                    AppState.certs.length() == 0,
-                    rx.spinner(size = "2", 
-                            loading = True,
-                            color="white",   
+                    (AppState.certs.length() == 0) & (AppState.values["search_value"] == ""),
+                    rx.center(
+                        rx.spinner(
+                            size="3", 
+                            color=Color.SECONDARY_BLUE.value,
+                        ),
+                        padding="60px",
                     ),
-                    table_certificados(),  # Siempre mostrar la tabla cuando hay datos cargados
+                    table_certificados(),
                 ),
+                spacing="6",
                 width="100%",
             ),
-
-            padding_top="4em",
-            spacing="4",
-            padding="2rem",
-            align_items="start",
-            align="end",
-            justify_content="end",
-            justify="end",
-            height="100%",
+            style=container_style,
+            padding_top="84px",  # Account for fixed navbar (64px + padding)
         ),
         overflow_y="auto",
         width="100%",
-        height="100vh",  # Ocupa toda la altura de la pantalla
-        padding_top="0.5em",
-        display="flex",  # Habilita flexbox
-        flex_direction="column",
-        on_scroll=lambda: AppState.on_scroll_throttled(),  # Scroll infinito con throttling
+        height="100vh",
+        background_color=Color.LIGHT_GREY.value,
+        on_scroll=lambda: AppState.on_scroll_throttled(),
+        on_mount=AppState.on_mount_certificados,
     )
+
 
 def familias_view() -> rx.Component:
-    """Vista de usuario autenticado"""
+    """Vista de familias - Estilo Bureau Veritas"""
     return rx.box(
         navbar(title="Familias"),
-        rx.hstack(
+        rx.box(
             rx.vstack(
                 rx.cond(
-                    AppState.fams.length() == 0,
-                    rx.spinner(size = "2", 
-                            loading = True,
-                            color_scheme="white",   
+                    (AppState.fams.length() == 0) & (AppState.values["search_value"] == ""),
+                    rx.center(
+                        rx.spinner(
+                            size="3", 
+                            color=Color.SECONDARY_BLUE.value,
+                        ),
+                        padding="60px",
                     ),
-                    table_familias(),  # Siempre mostrar la tabla cuando hay datos cargados
+                    table_familias(),
                 ),
+                spacing="6",
                 width="100%",
             ),
-
-            padding_top="4em",
-            spacing="4",
-            padding="2rem",
-            align_items="start",
-            align="end",
-            justify_content="end",
-            justify="end",
-            height="100%",
+            style=container_style,
+            padding_top="84px",
         ),
         overflow_y="auto",
         width="100%",
-        height="100vh",  # Ocupa toda la altura de la pantalla
-        padding_top="0.5em",
-        display="flex",  # Habilita flexbox
-        flex_direction="column",
-        on_scroll=lambda: AppState.on_scroll_throttled(),  # Scroll infinito con throttling
+        height="100vh",
+        background_color=Color.LIGHT_GREY.value,
+        on_scroll=lambda: AppState.on_scroll_throttled(),
+        on_mount=AppState.on_mount_familias,
     )
 
+
 def cotizaciones_view() -> rx.Component:
-    """Vista de usuario autenticado"""
+    """Vista de cotizaciones - Estilo Bureau Veritas"""
     return rx.box(
         navbar(title="Cotizaciones"),
-        rx.hstack(
+        rx.box(
             rx.vstack(
                 rx.cond(
-                    AppState.cots.length() == 0,
-                    rx.spinner(size = "2", 
-                            loading = True,
-                            color_scheme="white",   
+                    (AppState.cots.length() == 0) & (AppState.values["search_value"] == ""),
+                    rx.center(
+                        rx.spinner(
+                            size="3", 
+                            color=Color.SECONDARY_BLUE.value,
+                        ),
+                        padding="60px",
                     ),
-                    table_cotizaciones(),  # Siempre mostrar la tabla cuando hay datos cargados
+                    table_cotizaciones(),
                 ),
+                spacing="6",
                 width="100%",
             ),
-
-            padding_top="4em",
-            spacing="4",
-            padding="2rem",
-            align_items="start",
-            align="end",
-            justify_content="end",
-            justify="end",
-            height="100%",
+            style=container_style,
+            padding_top="84px",
         ),
         overflow_y="auto",
         width="100%",
-        height="100vh",  # Ocupa toda la altura de la pantalla
-        padding_top="0.5em",
-        display="flex",  # Habilita flexbox
-        flex_direction="column",
-        on_scroll=lambda: AppState.on_scroll_throttled(),  # Scroll infinito con throttling
+        height="100vh",
+        background_color=Color.LIGHT_GREY.value,
+        on_scroll=lambda: AppState.on_scroll_throttled(),
+        on_mount=AppState.on_mount_cotizaciones,
     )

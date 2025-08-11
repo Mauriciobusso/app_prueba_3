@@ -231,9 +231,11 @@ class AppState(rx.State):
                 self.user_data.current_rol_name = firestore_api.get_rol_name(self.user_data.current_rol)
                 
                 self.areas = firestore_api.get_areas()
-                self.user_data.areas_names= sorted([area['name'] for area in self.areas if area['id'] in new_data['areas']])
+                area_names = sorted([area['name'] for area in self.areas if area['id'] in new_data.get('areas', [])])
+                # Agregar "TODAS" como primera opción
+                self.user_data.areas_names = area_names
                 self.user_data.current_area = new_data.get("currentArea", "")
-                self.user_data.current_area_name = firestore_api.get_area_name(self.user_data.current_area)
+                self.user_data.current_area_name = firestore_api.get_area_name(self.user_data.current_area) if self.user_data.current_area else "TODAS"
 
             # Marcar como procesado
             firestore_queue.task_done()
@@ -270,9 +272,11 @@ class AppState(rx.State):
                 self.user_data.current_rol_name = firestore_api.get_rol_name(self.user_data.current_rol)
                 
                 self.areas = firestore_api.get_areas()
-                self.user_data.areas_names= sorted([area['name'] for area in self.areas if area['id'] in user_data.get('areas', [])])
+                area_names = sorted([area['name'] for area in self.areas if area['id'] in user_data.get('areas', [])])
+                # Agregar "TODAS" como primera opción
+                self.user_data.areas_names = ["TODAS"] + area_names
                 self.user_data.current_area = user_data.get("currentArea", "")
-                self.user_data.current_area_name = firestore_api.get_area_name(self.user_data.current_area)
+                self.user_data.current_area_name = firestore_api.get_area_name(self.user_data.current_area) if self.user_data.current_area else "TODAS"
                 
 
             # Configurar listener para cambios en Firestore
@@ -306,15 +310,67 @@ class AppState(rx.State):
     
     @rx.event
     async def set_current_area(self, area_name: str):
-        """Establece el rol actual del usuario."""
+        """Establece el área actual del usuario y actualiza las tablas."""
         try:
             email = self.user_data.data.get("email", "")
             self.user_data.current_area_name = area_name
-            self.user_data.current_area = self._find_area_id_by_name(area_name)
-            print(f"Area: {self.user_data.current_area}")
-            firestore_api.update_current_user(email, "currentArea", self.user_data.current_area) if self.user_data.current_area else None
+            
+            # Si el área es "TODAS", establecer current_area como None para no filtrar
+            if area_name == "TODAS":
+                self.user_data.current_area = None
+                print("📍 Area establecida a TODAS - Sin filtro por área")
+            else:
+                area_id = self._find_area_id_by_name(area_name)
+                self.user_data.current_area = area_id
+                print(f"📍 Area establecida: {area_name} (ID: {area_id})")
+            
+            # Actualizar en Firestore (guardar string vacío si es TODAS)
+            area_to_save = self.user_data.current_area if area_name != "TODAS" else ""
+            firestore_api.update_current_user(email, "currentArea", area_to_save)
+            
+            # Limpiar datos existentes para forzar recarga con el nuevo filtro
+            print("🧹 Limpiando datos para recarga...")
+            self.certs = []
+            self.certs_show = []
+            self.fams = []
+            self.fams_show = []
+            self.cots = []
+            self.cots_show = []
+            
+            # Limpiar también los valores de búsqueda para evitar conflictos
+            self.values["search_value"] = ""
+            
+            # Recargar datos según la página actual
+            try:
+                current_page = self.router.url.path
+                print(f"🔄 Recargando datos para página: {current_page}")
+                
+                if "/certificados" in current_page:
+                    print("🔄 Iniciando carga de certificados...")
+                    yield AppState.get_certs()
+                elif "/familias" in current_page:
+                    print("🔄 Iniciando carga de familias...")
+                    yield AppState.get_fams()
+                elif "/cotizaciones" in current_page:
+                    print("🔄 Iniciando carga de cotizaciones...")
+                    yield AppState.get_cots()
+                else:
+                    print(f"⚠️  Página no reconocida: {current_page}")
+                    
+            except Exception as router_error:
+                print(f"❌ Error con router: {router_error}")
+                # Fallback: recargar según current_page almacenado
+                if self.current_page == "certificaciones":
+                    yield AppState.get_certs()
+                elif self.current_page == "familias":  
+                    yield AppState.get_fams()
+                elif self.current_page == "cotizaciones":
+                    yield AppState.get_cots()
+                
         except Exception as e:
-            print(f"Error al establecer el area: {e}")
+            print(f"❌ Error al establecer el area: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Función para buscar el rol_id a partir del título
     def _find_rol_id_by_title(self, title):
@@ -327,6 +383,10 @@ class AppState(rx.State):
 
     # Función para buscar el rol_id a partir del título
     def _find_area_id_by_name(self, name):
+        # Si el nombre es "TODOS", retornar None directamente
+        if name == "TODOS":
+            return None
+            
         if self.user_data.data and self.areas:
             areas = self.areas
             for area_info in areas:
@@ -341,12 +401,28 @@ class AppState(rx.State):
             async with self:
                 print("🔄 Cargando certificados...")
                 filter = "" #Completar con el filtro
-                certs_data = firestore_api.get_certs(area = self.user_data.current_area, order_by = "issuedate" ,limit = 100, filter = filter)
+                
+                # Si current_area es None (TODOS), no aplicar filtro por área
+                area_filter = self.user_data.current_area if self.user_data.current_area else None
+                
+                if area_filter is None:
+                    print("📋 Cargando TODOS los certificados (sin filtro por área)")
+                else:
+                    print(f"📋 Cargando certificados para área: {area_filter}")
+                
+                certs_data = firestore_api.get_certs(area=area_filter, order_by="issuedate", limit=100, filter=filter)
                 self.certs = certs_data
                 self.certs_show = self.certs
-                print(f"✅ {len(certs_data)} certificados obtenidos correctamente")
+                
+                if self.certs:
+                    print(f"✅ {len(certs_data)} certificados obtenidos correctamente")
+                else:
+                    print("⚠️  No se encontraron certificados")
+                    
         except Exception as e:
-            print(f"Error al obtener los certificados: {e}")
+            print(f"❌ Error al obtener los certificados: {e}")
+            import traceback
+            traceback.print_exc()
     
     @rx.event
     async def update_certs_show(self):
@@ -368,7 +444,7 @@ class AppState(rx.State):
                 # Buscar con Algolia
                 algolia_results = await algolia_api.search_certs(
                     self.values["search_value"], 
-                    area=self.user_data.current_area,
+                    area=self.user_data.current_area,  # None si es TODOS
                     filters=filters
                 )
                 
@@ -385,10 +461,10 @@ class AppState(rx.State):
                         filter_conditions = ""
                     
                     self.certs = firestore_api.get_certs(
-                        area = self.user_data.current_area, 
-                        order_by = "issuedate", 
-                        limit = search_limit,
-                        filter = filter_conditions
+                        area=self.user_data.current_area,  # None si es TODOS
+                        order_by="issuedate", 
+                        limit=search_limit,
+                        filter=filter_conditions
                     )
                     
                     # Filtrar localmente como fallback
@@ -406,10 +482,10 @@ class AppState(rx.State):
                     filter_conditions = ""
                 
                 self.certs = firestore_api.get_certs(
-                    area = self.user_data.current_area, 
-                    order_by = "issuedate", 
-                    limit = search_limit,
-                    filter = filter_conditions
+                    area=self.user_data.current_area,  # None si es TODOS
+                    order_by="issuedate", 
+                    limit=search_limit,
+                    filter=filter_conditions
                 )
             else:
                 # Si no hay búsqueda y ya tenemos datos, usar existentes pero actualizarlos si es necesario
@@ -457,20 +533,44 @@ class AppState(rx.State):
         """Obtiene las familias."""
         try:
             async with self:
+                print("🔄 Cargando familias...")
+                
+                # Si current_area es None (TODOS), no aplicar filtro por área
+                area_filter = self.user_data.current_area if self.user_data.current_area else None
+                
+                if area_filter is None:
+                    print("📋 Cargando TODAS las familias (sin filtro por área)")
+                else:
+                    print(f"📋 Cargando familias para área: {area_filter}")
+
                 self.fams = firestore_api.get_fams(
-                    area = self.user_data.current_area, 
-                    order_by = "razonsocial",
-                    limit = 100,
-                    filter = ""
+                    area=area_filter, 
+                    order_by="razonsocial",
+                    limit=100,
+                    filter=""
                 )  
-                self.fams_show = self.fams[:30]  # Mostrar solo las primeras 30 familias
+                
+                if self.fams:
+                    self.fams_show = self.fams[:30]  # Mostrar solo las primeras 30 familias
+                    print(f"✅ {len(self.fams)} familias obtenidas correctamente, mostrando {len(self.fams_show)}")
+                else:
+                    self.fams_show = []
+                    print("⚠️  No se encontraron familias")
 
         except Exception as e:
-            print(f"Error al obtener las familias: {e}")
+            print(f"❌ Error al obtener las familias: {e}")
+            import traceback
+            traceback.print_exc()
 
     def set_search_text(self, value: str):
         """Actualiza el texto de búsqueda sin ejecutar la búsqueda."""
         self.search_text = value
+
+    @rx.event
+    async def handle_search_key(self, key: str):
+        """Maneja las teclas presionadas en el campo de búsqueda."""
+        if key == "Enter":
+            await self.execute_search()
 
     @rx.event
     async def execute_search(self):
@@ -536,17 +636,17 @@ class AppState(rx.State):
                     print("⚠️  Algolia no disponible o sin resultados, usando Firestore...")
                     if self.values.get("client", "") != "": 
                         self.fams = firestore_api.get_fams(
-                            area = self.user_data.current_area, 
-                            order_by = "razonsocial", 
-                            limit = search_limit,
-                            filter = [("razonsocial", "==", self.values["client"])]
+                            area=self.user_data.current_area,  # None si es TODOS
+                            order_by="razonsocial", 
+                            limit=search_limit,
+                            filter=[("razonsocial", "==", self.values["client"])]
                         )
                     else:
                         self.fams = firestore_api.get_fams(
-                            area = self.user_data.current_area, 
-                            order_by = "razonsocial", 
-                            limit = search_limit,
-                            filter = ""
+                            area=self.user_data.current_area,  # None si es TODOS
+                            order_by="razonsocial", 
+                            limit=search_limit,
+                            filter=""
                         )
                     
                     # Filtrar localmente como fallback
@@ -558,17 +658,17 @@ class AppState(rx.State):
                 print(f"🔄 Cargando familias iniciales (límite: {search_limit})...")
                 if self.values.get("client", "") != "": 
                     self.fams = firestore_api.get_fams(
-                        area = self.user_data.current_area, 
-                        order_by = "razonsocial", 
-                        limit = search_limit,
-                        filter = [("razonsocial", "==", self.values["client"])]
+                        area=self.user_data.current_area,  # None si es TODOS
+                        order_by="razonsocial", 
+                        limit=search_limit,
+                        filter=[("razonsocial", "==", self.values["client"])]
                     )
                 else:
                     self.fams = firestore_api.get_fams(
-                        area = self.user_data.current_area, 
-                        order_by = "razonsocial", 
-                        limit = search_limit,
-                        filter = ""
+                        area=self.user_data.current_area,  # None si es TODOS
+                        order_by="razonsocial", 
+                        limit=search_limit,
+                        filter=""
                     )
             else:
                 # Si no hay búsqueda y ya tenemos datos, usar existentes pero actualizarlos si es necesario
@@ -619,17 +719,33 @@ class AppState(rx.State):
         try:
             async with self:
                 print("🔄 Cargando cotizaciones...")
+                
+                # Si current_area es None (TODOS), no aplicar filtro por área
+                area_filter = self.user_data.current_area if self.user_data.current_area else None
+                
+                if area_filter is None:
+                    print("📋 Cargando TODAS las cotizaciones (sin filtro por área)")
+                else:
+                    print(f"📋 Cargando cotizaciones para área: {area_filter}")
+                
                 self.cots = firestore_api.get_cots(
-                    area = self.user_data.current_area, 
-                    order_by = "issuedate_timestamp",  # Usar timestamp para mejor ordenamiento
-                    limit = 100,
-                    filter = ""
+                    area=area_filter, 
+                    order_by="issuedate_timestamp",  # Usar timestamp para mejor ordenamiento
+                    limit=100,
+                    filter=""
                 )  
-                self.cots_show = self.cots[:30]  # Mostrar solo las primeras 30 cotizaciones
-                print(f"✅ {len(self.cots)} cotizaciones obtenidas correctamente")
+                
+                if self.cots:
+                    self.cots_show = self.cots[:30]  # Mostrar solo las primeras 30 cotizaciones
+                    print(f"✅ {len(self.cots)} cotizaciones obtenidas correctamente, mostrando {len(self.cots_show)}")
+                else:
+                    self.cots_show = []
+                    print("⚠️  No se encontraron cotizaciones")
 
         except Exception as e:
-            print(f"Error al obtener las cotizaciones: {e}")
+            print(f"❌ Error al obtener las cotizaciones: {e}")
+            import traceback
+            traceback.print_exc()
 
     @rx.event
     async def update_cots_show(self):
@@ -665,17 +781,17 @@ class AppState(rx.State):
                     algolia_results = []  # Definir variable para evitar error
                     if self.values.get("client", "") != "": 
                         self.cots = firestore_api.get_cots(
-                            area = self.user_data.current_area, 
-                            order_by = "issuedate_timestamp",
-                            limit = search_limit,
-                            filter = [("client", "==", self.values["client"])]
+                            area=self.user_data.current_area,  # None si es TODOS
+                            order_by="issuedate_timestamp",
+                            limit=search_limit,
+                            filter=[("client", "==", self.values["client"])]
                         )
                     else:
                         self.cots = firestore_api.get_cots(
-                            area = self.user_data.current_area, 
-                            order_by = "issuedate_timestamp",
-                            limit = search_limit,
-                            filter = ""
+                            area=self.user_data.current_area,  # None si es TODOS
+                            order_by="issuedate_timestamp",
+                            limit=search_limit,
+                            filter=""
                         )
                     
                     # Filtrar localmente como fallback
@@ -688,27 +804,27 @@ class AppState(rx.State):
                 
                 if self.values.get("client", "") != "": 
                     self.cots = firestore_api.get_cots(
-                        area = self.user_data.current_area, 
-                        order_by = "issuedate_timestamp",
-                        limit = search_limit,
-                        filter = [("client", "==", self.values["client"])]
+                        area=self.user_data.current_area,  # None si es TODOS
+                        order_by="issuedate_timestamp",
+                        limit=search_limit,
+                        filter=[("client", "==", self.values["client"])]
                     )
                 else:
                     self.cots = firestore_api.get_cots(
-                        area = self.user_data.current_area, 
-                        order_by = "issuedate_timestamp",
-                        limit = search_limit,
-                        filter = ""
+                        area=self.user_data.current_area,  # None si es TODOS
+                        order_by="issuedate_timestamp",
+                        limit=search_limit,
+                        filter=""
                     )
             else:
                 # Si no hay búsqueda y ya tenemos datos, usar existentes pero actualizarlos si es necesario
                 #Filtrar por cliente
                 if self.values.get("client", "") != "": 
                     self.cots = firestore_api.get_cots(
-                        area = self.user_data.current_area, 
-                        order_by = "issuedate_timestamp",  # Usar timestamp
-                        limit = self.values["limit"] if self.values["limit"]>0 else 0,
-                        filter = [("client", "==", self.values["client"])]
+                        area=self.user_data.current_area,  # None si es TODOS
+                        order_by="issuedate_timestamp",  # Usar timestamp
+                        limit=self.values["limit"] if self.values["limit"]>0 else 0,
+                        filter=[("client", "==", self.values["client"])]
                     )
                 else:
                     # Usar datos existentes si no hay filtros específicos

@@ -2,6 +2,7 @@ import reflex as rx
 from ..backend.app_state import AppState
 from reflex_calendar import calendar
 from ..styles import colors
+from ..styles.style import search_container_style
 
 def format_date_component(date_var):
     """
@@ -11,6 +12,35 @@ def format_date_component(date_var):
         date_var.contains("-") & (date_var.length() == 10),
         date_var.split("-")[2] + "/" + date_var.split("-")[1] + "/" + date_var.split("-")[0],
         date_var
+    )
+
+def search_bar_component(height="auto") -> rx.Component:
+    """
+    Componente reutilizable para la barra de búsqueda - Estilo Bureau Veritas
+    """
+    return rx.hstack(
+        rx.input(
+            placeholder="Buscar...",
+            value=AppState.search_text,
+            on_change=AppState.set_search_text,
+            width="100%",
+            height=height if height != "auto" else "44px",
+            on_key_down=lambda key: AppState.handle_search_key(key),
+        ),
+        rx.button(
+            "🔍 Buscar",
+            on_click=AppState.execute_search,
+            size="3",
+            variant="solid",
+            style={
+                "white_space": "nowrap",
+                "min_width": "120px",
+            }
+        ),
+        width="50%",
+        style=search_container_style,
+        spacing="3",
+        align_items="center",
     )
 
 def select_rol()->rx.Component:
@@ -60,23 +90,7 @@ def select_area()->rx.Component:
 
 def table_certificados()->rx.Component:
     return rx.vstack(
-        rx.hstack(
-            rx.input(
-                placeholder="Search here...",
-                value=AppState.search_text,
-                on_change=AppState.set_search_text,
-                width="80%",
-            ),
-            rx.button(
-                "🔍 Buscar",
-                on_click=AppState.execute_search,
-                width="20%",
-                background_color="blue",
-                color="white",
-            ),
-            width="100%",
-            spacing="2",
-        ),
+        search_bar_component(),
         rx.table.root(
             rx.table.header(
                 rx.table.row(
@@ -112,10 +126,9 @@ def table_certificados()->rx.Component:
                         )
                     ),
                     style={
-                        "_hover": {"bg": rx.color("gray", 3)},
-                        "height": "40px",
-                        "max-height": "40px",
-                        "overflow": "hidden"
+                        "_hover": {"bg": colors.Color.LIGHT_BLUE.value},
+                        "height": "48px",
+                        "border_bottom": f"1px solid {colors.Color.LIGHT_GREY.value}",
                     },
                     align="center",
                 )),
@@ -123,10 +136,10 @@ def table_certificados()->rx.Component:
                     rx.table.row(
                         rx.table.cell(
                             rx.text("Ningún resultado encontrado", 
-                                   style={"font-style": "italic", "color": "gray"}),
+                                   style={"font_style": "italic", "color": colors.TextColor.MUTED.value}),
                             col_span=7,
                             text_align="center",
-                            padding="20px"
+                            padding="40px"
                         )
                     )
                 )
@@ -134,54 +147,19 @@ def table_certificados()->rx.Component:
             variant="surface",
             size="3",
             width="100%",
+            style={
+                "border": f"1px solid {colors.Color.LIGHT_GREY.value}",
+                "border_radius": "8px",
+                "overflow": "hidden",
+            }
         ),
-        # Indicador de scroll infinito  
-        rx.cond(
-            AppState.values["search_value"] != "",
-            rx.vstack(
-                rx.cond(
-                    AppState.is_loading_more,
-                    rx.hstack(
-                        rx.spinner(size="2"),
-                        rx.text("Cargando más...", size="2", color="gray"),
-                        spacing="2",
-                        align="center"
-                    ),
-                    rx.text(
-                        f"📜 {AppState.certs_show.length()} certificados • Scroll hacia abajo para cargar más",
-                        size="2",
-                        color="gray",
-                        text_align="center"
-                    )
-                ),
-                spacing="2",
-                align="center",
-                padding="20px",
-                width="100%"
-            )
-        ),
+        spacing="4",
         width="100%",
     )
 
 def table_familias()->rx.Component:
     return rx.vstack(
-        rx.hstack(
-            rx.input(
-                placeholder="Search here...",
-                value=AppState.search_text,
-                on_change=AppState.set_search_text,
-                width="80%",
-            ),
-            rx.button(
-                "🔍 Buscar",
-                on_click=AppState.execute_search,
-                width="20%",
-                background_color="blue",
-                color="white",
-            ),
-            width="100%",
-            spacing="2",
-        ),
+        search_bar_component(),
         rx.table.root(
             rx.table.header(
                 rx.table.row(
@@ -238,128 +216,80 @@ def table_familias()->rx.Component:
             variant="surface",
             size="1",
         ),
-        # Botón para cargar más resultados
-        rx.cond(
-            AppState.values["search_value"] != "",
-            rx.vstack(
-                rx.cond(
-                    AppState.is_loading_more,
-                    rx.spinner(size="2"),
-                    rx.button(
-                        "📄 Cargar más familias",
-                        on_click=AppState.load_more_fams,
-                        variant="outline",
-                        size="2",
-                        width="200px",
-                    )
-                ),
-                rx.text(
-                    f"Mostrando {AppState.fams_show.length()} de {AppState.total_fams} familias",
-                    size="2",
-                    color="gray"
-                ),
-                spacing="2",
-                align="center",
-                padding="20px"
-            )
-        ),
         width="100%",
     )
    
 def table_cotizaciones()->rx.Component:
     return rx.vstack(
-        rx.hstack(
-            rx.input(
-                placeholder="Search here...",
-                value=AppState.search_text,
-                on_change=AppState.set_search_text,
-                width="80%",
-                height="40px",
-            ),
-            rx.button(
-                "🔍 Buscar",
-                on_click=AppState.execute_search,
-                width="20%",
-                background_color=colors.Color.GREY.value,
-                color="white",
-                height="40px",
-            ),
-            width="100%",
-            spacing="2",
-        ),
-        rx.table.root(
-            rx.table.header(
-                rx.table.row(
-                    rx.table.column_header_cell("Número", width="15%"), #1
-                    rx.table.column_header_cell("Fecha", width="15%"), #2
-                    rx.table.column_header_cell("Razon Social", width="35%"), #3
-                    rx.table.column_header_cell("Estado", width="20%"), #4
-                    rx.table.column_header_cell("Id Cotización", width="15%"), #5
+        search_bar_component(height="40px"),
+        rx.cond(
+            # Mostrar spinner mientras se cargan los datos (cuando cots_show está vacío pero se está cargando)
+            (AppState.cots_show.length() == 0) & (AppState.values["search_value"] == ""),
+            rx.vstack(
+                rx.spinner(
+                    size="3",
+                    color="blue.500",
+                    empty_color="gray.200",
+                    thickness="4px",
+                    speed="0.65s"
                 ),
+                rx.text("Cargando cotizaciones...", 
+                       style={"color": colors.TextColor.MUTED.value, "font_style": "italic"}),
+                spacing="3",
+                align="center",
+                padding="40px",
+                width="100%"
             ),
-            rx.table.body(
-                rx.cond(
-                    AppState.cots_show.length() > 0,
-                    rx.foreach(AppState.cots_show, lambda cot: rx.table.row(
-                    rx.table.cell(cot.num + '-' + cot.year, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}), #1
-                    rx.table.cell(format_date_component(cot.issuedate),
-                                    style={"white-space": "nowrap", "overflow": "hidden", "text-overflow": "ellipsis"}), #2
-                    rx.table.cell(cot.client, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}), #3
-                    #rx.table.cell(cot.familys),
-                    rx.table.cell(cot.status, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}), #4
-                    rx.table.cell(rx.link(
-                        cot.id,
-                        href=f"https://panel.bvarg.com.ar/app/cotizaciones/{cot.id}",
-                        is_external=True,
-                        ), style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"} #5
-                    ),
-                    style={
-                        "_hover": {"bg": rx.color("gray", 3)},
-                        "height": "40px",
-                        "max-height": "40px",
-                        "overflow": "hidden"
-                    },
-                    align="center",
-                )),
-                    # Mostrar mensaje cuando no hay resultados
+            # Mostrar tabla cuando hay datos o cuando hay búsqueda activa
+            rx.table.root(
+                rx.table.header(
                     rx.table.row(
-                        rx.table.cell(
-                            rx.text("Ningún resultado encontrado", 
-                                   style={"font-style": "italic", "color": "gray"}),
-                            col_span=5,
-                            text_align="center",
-                            padding="20px"
+                        rx.table.column_header_cell("Número", width="15%"), #1
+                        rx.table.column_header_cell("Fecha", width="15%"), #2
+                        rx.table.column_header_cell("Razon Social", width="35%"), #3
+                        rx.table.column_header_cell("Estado", width="20%"), #4
+                        rx.table.column_header_cell("Id Cotización", width="15%"), #5
+                    ),
+                ),
+                rx.table.body(
+                    rx.cond(
+                        AppState.cots_show.length() > 0,
+                        rx.foreach(AppState.cots_show, lambda cot: rx.table.row(
+                        rx.table.cell(cot.num + '-' + cot.year, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}), #1
+                        rx.table.cell(format_date_component(cot.issuedate),
+                                        style={"white-space": "nowrap", "overflow": "hidden", "text-overflow": "ellipsis"}), #2
+                        rx.table.cell(cot.client, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}), #3
+                        #rx.table.cell(cot.familys),
+                        rx.table.cell(cot.status, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}), #4
+                        rx.table.cell(rx.link(
+                            cot.id,
+                            href=f"https://panel.bvarg.com.ar/app/cotizaciones/{cot.id}",
+                            is_external=True,
+                            ), style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"} #5
+                        ),
+                        style={
+                            "_hover": {"bg": rx.color("gray", 3)},
+                            "height": "40px",
+                            "max-height": "40px",
+                            "overflow": "hidden"
+                        },
+                        align="center",
+                    )),
+                        # Mostrar mensaje cuando no hay resultados
+                        rx.table.row(
+                            rx.table.cell(
+                                rx.text("Ningún resultado encontrado", 
+                                       style={"font-style": "italic", "color": "gray"}),
+                                col_span=5,
+                                text_align="center",
+                                padding="20px"
+                            )
                         )
                     )
-                )
-            ),
-            variant="surface",
-            size="1",
-            width="100%",
-        ),
-        # Botón para cargar más resultados
-        rx.cond(
-            AppState.values["search_value"] != "",
-            rx.vstack(
-                rx.cond(
-                    AppState.is_loading_more,
-                    rx.spinner(size="2"),
-                    rx.button(
-                        "💼 Cargar más cotizaciones",
-                        on_click=AppState.load_more_cots,
-                        variant="outline",
-                        size="2",
-                        width="200px",
-                    )
                 ),
-                rx.text(
-                    f"Mostrando {AppState.cots_show.length()} de {AppState.total_cots} cotizaciones",
-                    size="2",
-                    color="gray"
-                ),
-                spacing="2",
-                align="center",
-                padding="20px"
+                variant="surface",
+                size="1",
+                width="100%",
             )
         ),
         width="100%",

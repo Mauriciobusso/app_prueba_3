@@ -181,17 +181,54 @@ class FirestoreAPI:
             return []
             
         try:
-            docs = self.get_collection_data(
-                collection="certificados",
-                area=area,
-                order_by=order_by,
-                direction=firestore.Query.ASCENDING,
-                limit=limit
-            )
+            # Si area es None, obtener todos los certificados sin filtro por área
+            if area is None:
+                print("📋 Obteniendo TODOS los certificados (sin filtro por área)")
+                # Obtener todos los certificados sin filtrar por área
+                certs_collection = self.db.collection("certificados")
+                
+                # Aplicar filtros adicionales si los hay
+                query = certs_collection
+                if filter:
+                    if isinstance(filter, list):
+                        for f in filter:
+                            field, op, value = f
+                            query = query.where(field, op, value)
+                
+                # Aplicar ordenamiento
+                if order_by:
+                    query = query.order_by(order_by, direction=firestore.Query.ASCENDING)
+                
+                # Aplicar límite
+                if limit > 0:
+                    query = query.limit(limit)
+                
+                docs_snapshot = query.get()
+                docs = []
+                for doc in docs_snapshot:
+                    data = doc.to_dict()
+                    data["id"] = doc.id
+                    docs.append(data)
+                    
+            elif area:  # Si hay un área específica
+                docs = self.get_collection_data(
+                    collection="certificados",
+                    area=area,
+                    order_by=order_by,
+                    direction=firestore.Query.ASCENDING,
+                    limit=limit
+                )
+            else:
+                # Caso donde area es string vacío pero no None
+                print("📋 Área vacía, retornando lista vacía")
+                return []
             
             # Verificar si docs es None o vacío
             if not docs:
-                print("📋 No se encontraron certificados o error en la consulta.")
+                if area is None:
+                    print("📋 No se encontraron certificados en toda la base de datos")
+                else:
+                    print(f"📋 No se encontraron certificados para el área: {area}")
                 return []
             
             resultados = [Certs(
@@ -213,10 +250,15 @@ class FirestoreAPI:
                 drive_file_id_signed=cert_data.get("drive_file_id_signed", ""),
                 ) for cert_data in docs]
             
-            print(f"✅ {len(resultados)} certificados obtenidos correctamente")
+            if area is None:
+                print(f"✅ {len(resultados)} certificados obtenidos correctamente (TODAS las áreas)")
+            else:
+                print(f"✅ {len(resultados)} certificados obtenidos correctamente para área: {area}")
             return resultados
         except Exception as e:
-            print(f"Error al obtener certificados: {e}")
+            print(f"❌ Error al obtener certificados: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def get_fams(
@@ -232,7 +274,36 @@ class FirestoreAPI:
             return []
             
         try:
-            if area:
+            # Si area es None, obtener todas las familias sin filtro por área
+            if area is None:
+                print("📋 Obteniendo TODAS las familias (sin filtro por área)")
+                # Obtener todas las familias sin filtrar por área
+                fams_collection = self.db.collection("familias")
+                
+                # Aplicar filtros adicionales si los hay
+                query = fams_collection
+                if filter:
+                    if isinstance(filter, list):
+                        for f in filter:
+                            field, op, value = f
+                            query = query.where(field, op, value)
+                
+                # Aplicar ordenamiento
+                if order_by:
+                    query = query.order_by(order_by, direction=firestore.Query.ASCENDING)
+                
+                # Aplicar límite
+                if limit > 0:
+                    query = query.limit(limit)
+                
+                docs = query.get()
+                fams = []
+                for doc in docs:
+                    data = doc.to_dict()
+                    data["id"] = doc.id
+                    fams.append(data)
+                    
+            elif area:  # Si hay un área específica
                 fams = self.get_collection_data(
                     collection="familias",
                     area=area,
@@ -241,35 +312,46 @@ class FirestoreAPI:
                     direction=firestore.Query.ASCENDING,
                     limit=limit
                 )
-
-                # Verificar si fams es None o vacío
-                if not fams:
-                    print("📋 No se encontraron familias o error en la consulta.")
-                    return []
-
-                resultados = [Fam(
-                    id=fam.get("id", ""),
-                    area=fam.get("area", ""),
-                    family=fam.get("family", ""),
-                    product=fam.get("product", ""),
-                    origen=fam.get("origen", ""),
-                    expirationdate=fam.get("expirationdate", ""),
-                    vigencia=fam.get("vigencia", ""),
-                    client=fam.get("razonsocial", ""),
-                    client_id=fam["client"] if "client" in fam and fam["client"] is not None and isinstance(fam["client"], str) else "",
-                    system=fam.get("system", "") if fam.get("system") is not None else "",
-                    status=fam.get("status", "") if fam.get("status") is not None else "",
-                    models=[Model()],
-                    rubro=fam["rubro"] if "rubro" in fam and fam["rubro"] is not None else "",
-                    subrubro=fam["subrubro"] if "subrubro" in fam and fam["subrubro"] is not None else ""
-                ) for fam in fams]
-
-                print(f"✅ {len(resultados)} familias obtenidas correctamente")
-                return resultados
             else:
+                # Caso donde area es string vacío pero no None
+                print("📋 Área vacía, retornando lista vacía")
                 return []
+
+            # Verificar si fams es None o vacío
+            if not fams:
+                if area is None:
+                    print("📋 No se encontraron familias en toda la base de datos")
+                else:
+                    print(f"📋 No se encontraron familias para el área: {area}")
+                return []
+
+            resultados = [Fam(
+                id=fam.get("id", ""),
+                area=fam.get("area", ""),
+                family=fam.get("family", ""),
+                product=fam.get("product", ""),
+                origen=fam.get("origen", ""),
+                expirationdate=fam.get("expirationdate", ""),
+                vigencia=fam.get("vigencia", ""),
+                client=fam.get("razonsocial", ""),
+                client_id=fam["client"] if "client" in fam and fam["client"] is not None and isinstance(fam["client"], str) else "",
+                system=fam.get("system", "") if fam.get("system") is not None else "",
+                status=fam.get("status", "") if fam.get("status") is not None else "",
+                models=[Model()],
+                rubro=fam["rubro"] if "rubro" in fam and fam["rubro"] is not None else "",
+                subrubro=fam["subrubro"] if "subrubro" in fam and fam["subrubro"] is not None else ""
+            ) for fam in fams]
+
+            if area is None:
+                print(f"✅ {len(resultados)} familias obtenidas correctamente (TODAS las áreas)")
+            else:
+                print(f"✅ {len(resultados)} familias obtenidas correctamente para área: {area}")
+            return resultados
+            
         except Exception as e:
-            print(f"Error al obtener familias: {e}")
+            print(f"❌ Error al obtener familias: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def get_cots(
@@ -285,7 +367,39 @@ class FirestoreAPI:
             return []
             
         try:
-            if area:
+            # Si area es None, obtener todas las cotizaciones sin filtro por área
+            if area is None:
+                print("📋 Obteniendo TODAS las cotizaciones (sin filtro por área)")
+                # Obtener todas las cotizaciones sin filtrar por área
+                cots_collection = self.db.collection("cotizaciones")
+                
+                # Aplicar filtros adicionales si los hay
+                query = cots_collection
+                if filter:
+                    if isinstance(filter, list):
+                        for f in filter:
+                            field, op, value = f
+                            query = query.where(field, op, value)
+                    else:
+                        # Manejo de filtros string (si es necesario)
+                        pass
+                
+                # Aplicar ordenamiento
+                if order_by:
+                    query = query.order_by(order_by, direction=firestore.Query.DESCENDING)
+                
+                # Aplicar límite
+                if limit > 0:
+                    query = query.limit(limit)
+                
+                docs = query.get()
+                cots = []
+                for doc in docs:
+                    data = doc.to_dict()
+                    data["id"] = doc.id
+                    cots.append(data)
+                    
+            elif area:  # Si hay un área específica
                 cots = self.get_collection_data(
                     collection="cotizaciones",
                     area=area,
@@ -294,47 +408,58 @@ class FirestoreAPI:
                     direction=firestore.Query.DESCENDING,  # Más recientes primero
                     limit=limit
                 )
-
-                # Verificar si cots es None o vacío
-                if not cots:
-                    print("📋 No se encontraron cotizaciones o error en la consulta.")
-                    return []
-
-                resultados = [Cot(
-                    id=cot.get("id", ""),
-                    area=cot.get("area", ""),
-                    #family=cot.get("family", ""),
-                    #product=cot.get("product", ""),
-                    num=completar_con_ceros(cot.get("number", ""), 4),
-                    year=completar_con_ceros(cot.get("year", ""), 2),
-                    client=cot.get("razonsocial", ""),
-                    client_id=cot["client"] if "client" in cot and cot["client"] is not None and isinstance(cot["client"], str) else "",
-                    issuedate=cot.get("issuedate", ""),
-                    issuedate_timestamp=cot.get("issuedate_timestamp", 0.0),  # Timestamp para ordenamiento
-                    vigencia=cot.get("vigencia", ""),
-                    status=cot.get("estado", "") if cot.get("estado") is not None else "",
-                    aprueba=cot.get("aprueba", "") if cot.get("aprueba") is not None else "",
-                    drive_file_id=cot.get("drive_file_id", "") if cot.get("drive_file_id") is not None else "",
-                    drive_file_id_name=cot.get("drive_file_id_name", "") if cot.get("drive_file_id_name") is not None else "",
-                    drive_aprobacion_id=cot.get("drive_aprobacion_id", "") if cot.get("drive_aprobacion_id") is not None else "",
-                    drive_aceptacion_id=cot.get("drive_aceptacion_id", "") if cot.get("drive_aceptacion_id") is not None else "",
-                    enviada_fecha=cot.get("enviada_fecha", "") if cot.get("enviada_fecha") is not None else "",
-                    facturada_fecha=cot.get("facturada_fecha", "") if cot.get("facturada_fecha") is not None else "",
-                    facturar=cot.get("facturar", "") if cot.get("facturar") is not None else "",
-                    nombre=cot.get("nombre", "") if cot.get("nombre") is not None else "",
-                    email=cot.get("mail", "") if cot.get("mail") is not None else "",
-                    ot=cot.get("op", "") if cot.get("op") is not None else "",
-                    rev=cot.get("rev", "") if cot.get("rev") is not None else "",
-                    resolucion=cot.get("resolucion", "") if cot.get("resolucion") is not None else "",
-                    cuenta=cot.get("cuenta", "") if cot.get("cuenta") is not None else "",
-                ) for cot in cots]
-
-                print(f"✅ {len(resultados)} cotizaciones obtenidas correctamente")
-                return resultados
             else:
+                # Caso donde area es string vacío pero no None
+                print("📋 Área vacía, retornando lista vacía")
                 return []
+
+            # Verificar si cots es None o vacío
+            if not cots:
+                if area is None:
+                    print("📋 No se encontraron cotizaciones en toda la base de datos")
+                else:
+                    print(f"📋 No se encontraron cotizaciones para el área: {area}")
+                return []
+
+            resultados = [Cot(
+                id=cot.get("id", ""),
+                area=cot.get("area", ""),
+                #family=cot.get("family", ""),
+                #product=cot.get("product", ""),
+                num=completar_con_ceros(cot.get("number", ""), 4),
+                year=completar_con_ceros(cot.get("year", ""), 2),
+                client=cot.get("razonsocial", ""),
+                client_id=cot["client"] if "client" in cot and cot["client"] is not None and isinstance(cot["client"], str) else "",
+                issuedate=cot.get("issuedate", ""),
+                issuedate_timestamp=cot.get("issuedate_timestamp", 0.0),  # Timestamp para ordenamiento
+                vigencia=cot.get("vigencia", ""),
+                status=cot.get("estado", "") if cot.get("estado") is not None else "",
+                aprueba=cot.get("aprueba", "") if cot.get("aprueba") is not None else "",
+                drive_file_id=cot.get("drive_file_id", "") if cot.get("drive_file_id") is not None else "",
+                drive_file_id_name=cot.get("drive_file_id_name", "") if cot.get("drive_file_id_name") is not None else "",
+                drive_aprobacion_id=cot.get("drive_aprobacion_id", "") if cot.get("drive_aprobacion_id") is not None else "",
+                drive_aceptacion_id=cot.get("drive_aceptacion_id", "") if cot.get("drive_aceptacion_id") is not None else "",
+                enviada_fecha=cot.get("enviada_fecha", "") if cot.get("enviada_fecha") is not None else "",
+                facturada_fecha=cot.get("facturada_fecha", "") if cot.get("facturada_fecha") is not None else "",
+                facturar=cot.get("facturar", "") if cot.get("facturar") is not None else "",
+                nombre=cot.get("nombre", "") if cot.get("nombre") is not None else "",
+                email=cot.get("mail", "") if cot.get("mail") is not None else "",
+                ot=cot.get("op", "") if cot.get("op") is not None else "",
+                rev=cot.get("rev", "") if cot.get("rev") is not None else "",
+                resolucion=cot.get("resolucion", "") if cot.get("resolucion") is not None else "",
+                cuenta=cot.get("cuenta", "") if cot.get("cuenta") is not None else "",
+            ) for cot in cots]
+
+            if area is None:
+                print(f"✅ {len(resultados)} cotizaciones obtenidas correctamente (TODAS las áreas)")
+            else:
+                print(f"✅ {len(resultados)} cotizaciones obtenidas correctamente para área: {area}")
+            return resultados
+            
         except Exception as e:
-            print(f"Error al obtener cotizaciones: {e}")
+            print(f"❌ Error al obtener cotizaciones: {e}")
+            import traceback
+            traceback.print_exc()
             return []
         
     def get_collection_data(
