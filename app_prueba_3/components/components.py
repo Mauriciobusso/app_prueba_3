@@ -1,215 +1,245 @@
 import reflex as rx
-from ..backend.app_state import AppState
-from reflex_calendar import calendar
-from ..styles import colors
-from ..styles.style import search_container_style
+from app_prueba_3.styles.style import *
+from app_prueba_3.styles.colors import Color
+from app_prueba_3.backend.app_state import AppState
+from ..utils import format_date_reflex
 
-def format_date_component(date_var):
-    """
-    Componente para formatear fechas de YYYY-mm-dd a dd/mm/YYYY
-    """
-    return rx.cond(
-        date_var.contains("-") & (date_var.length() == 10),
-        date_var.split("-")[2] + "/" + date_var.split("-")[1] + "/" + date_var.split("-")[0],
-        date_var
-    )
-
-def search_bar_component(height="auto") -> rx.Component:
-    """
-    Componente reutilizable para la barra de búsqueda - Estilo Bureau Veritas
-    """
-    return rx.hstack(
-        rx.input(
-            placeholder="Buscar...",
-            value=AppState.search_text,
-            on_change=AppState.set_search_text,
-            width="100%",
-            height=height if height != "auto" else "44px",
-            on_key_down=lambda key: AppState.handle_search_key(key),
-        ),
+def session_keepalive():
+    """Componente invisible que mantiene la sesión activa"""
+    return rx.fragment(
+        # Componente invisible que actualiza la actividad cada 5 minutos
+        rx.script(f"""
+            setInterval(() => {{
+                // Solo hacer ping si hay sesión activa
+                if (localStorage.getItem('session_internal') === 'true') {{
+                    // Trigger keepalive usando el evento de Reflex
+                    const event = new CustomEvent('keepalive_trigger');
+                    document.dispatchEvent(event);
+                }}
+            }}, 300000); // 5 minutos
+            
+            // Listener para el evento personalizado
+            document.addEventListener('keepalive_trigger', function() {{
+                // Llamar al método de keepalive del estado
+                const trigger = document.querySelector('[data-keepalive-trigger]');
+                if (trigger) {{
+                    trigger.click();
+                }}
+            }});
+        """),
+        # Botón invisible que se activa desde JavaScript
         rx.button(
-            "🔍 Buscar",
-            on_click=AppState.execute_search,
-            size="3",
-            variant="solid",
+            "keepalive",
+            on_click=AppState.keepalive_ping,
             style={
-                "white_space": "nowrap",
-                "min_width": "120px",
-            }
-        ),
-        width="50%",
-        style=search_container_style,
-        spacing="3",
-        align_items="center",
-    )
-
-def select_rol()->rx.Component:
-    """Select component for choosing a role."""
-    return rx.cond(
-        AppState.user_data.current_rol_name,
-        rx.select(
-            items=AppState.user_data.roles_names,
-            value= AppState.user_data.current_rol_name,
-            on_change=AppState.set_current_rol,
-            name= "select_rol",
-            required=True,
-            align="center",
-            width="150px",
-        ),
-        rx.spinner(
-            size="2",
-            color="blue.500",
-            empty_color="gray.200",
-            thickness="4px",
-            speed="0.65s",
-        ),
-    )
-
-
-def select_area()->rx.Component:
-    """Select component for choosing an area."""
-    return rx.cond(
-        AppState.user_data.current_area_name,
-        rx.select(
-            items=AppState.user_data.areas_names,
-            value= AppState.user_data.current_area_name,
-            on_change=AppState.set_current_area,
-            name= "select_area",
-            required=True,
-            align="center",
-            width="150px",
-        ),
-        rx.spinner(
-            size="2",
-            color="blue.500",
-            empty_color="gray.200",
-            thickness="4px",
-            speed="0.65s"
+                "display": "none",
+                "visibility": "hidden",
+                "position": "absolute",
+                "left": "-9999px"
+            },
+            **{"data-keepalive-trigger": "true"}
         )
     )
 
-def table_certificados()->rx.Component:
-    return rx.vstack(
-        search_bar_component(),
-        rx.table.root(
-            rx.table.header(
-                rx.table.row(
-                    rx.table.column_header_cell("Certificado", width="14.3%"),
-                    rx.table.column_header_cell("Revisión", width="14.3%"),
-                    rx.table.column_header_cell("Fecha de Asignación", width="14.3%"),
-                    rx.table.column_header_cell("Fecha de Emisión", width="14.3%"),
-                    rx.table.column_header_cell("Vencimiento", width="14.3%"),
-                    rx.table.column_header_cell("Estado", width="14.3%"),
-                    rx.table.column_header_cell("Id Familia", width="14.2%"),
-                ),
+def session_status_indicator():
+    """Indicador visual del estado de la sesión"""
+    return rx.cond(
+        AppState.session_internal,
+        rx.hstack(
+            rx.icon("check_circle", size=16, color="green"),
+            rx.text(
+                "Sesión activa", 
+                font_size="0.8rem", 
+                color=Color.GRAY_600.value
             ),
-            rx.table.body(
-                rx.cond(
-                    AppState.certs_show.length() > 0,
-                    rx.foreach(AppState.certs_show, lambda cert: rx.table.row(
-                    rx.table.cell(f"{cert.num}-{cert.year}"),
-                    rx.cond(cert.rev!="00",
-                        rx.table.cell(f"Rev.{cert.rev}"),
-                        rx.table.cell(".", content_editable=True)
-                    ),
-                    rx.table.cell(cert.assigmentdate, 
-                                    style={"white-space": "nowrap"}),
-                    rx.table.cell(format_date_component(cert.issuedate),
-                                    style={"white-space": "nowrap"}),
-                    rx.table.cell(format_date_component(cert.vencimiento),
-                                    style={"white-space": "nowrap"}),
-                    rx.table.cell(cert.status),
-                    rx.table.cell(rx.link(
-                        cert.family_id,
-                        href=f"https://panel.bvarg.com.ar/app/familias/{cert.family_id}",
-                        is_external=True,
-                        )
-                    ),
-                    style={
-                        "_hover": {"bg": colors.Color.LIGHT_BLUE.value},
-                        "height": "48px",
-                        "border_bottom": f"1px solid {colors.Color.LIGHT_GREY.value}",
-                    },
-                    align="center",
-                )),
-                    # Mostrar mensaje cuando no hay resultados
-                    rx.table.row(
-                        rx.table.cell(
-                            rx.text("Ningún resultado encontrado", 
-                                   style={"font_style": "italic", "color": colors.TextColor.MUTED.value}),
-                            col_span=7,
-                            text_align="center",
-                            padding="40px"
-                        )
-                    )
-                )
-            ),
-            variant="surface",
-            size="3",
-            width="100%",
-            style={
-                "border": f"1px solid {colors.Color.LIGHT_GREY.value}",
-                "border_radius": "8px",
-                "overflow": "hidden",
-            }
+            spacing="1",
+            align="center"
         ),
-        spacing="4",
-        width="100%",
+        rx.hstack(
+            rx.icon("x_circle", size=16, color="red"),
+            rx.text(
+                "Sin sesión", 
+                font_size="0.8rem", 
+                color=Color.GRAY_600.value
+            ),
+            spacing="1",
+            align="center"
+        )
     )
 
-def table_familias()->rx.Component:
+def table_cell(content, compact_mode=True):
+    """Componente reutilizable para celdas de tabla con modo compacto"""
+    if compact_mode:
+        return rx.table.cell(
+            content,
+            padding="0px 3px",
+            font_size="0.7rem",
+            line_height="1",
+            height="18px",
+            border_bottom=f"1px solid {Color.GRAY_200.value}",
+            white_space="nowrap",
+            overflow="hidden",
+            text_overflow="ellipsis",
+            max_width="200px",
+        )
+    else:
+        return rx.table.cell(
+            content,
+            padding="8px 12px",
+            font_size="0.9rem",
+            border_bottom=f"1px solid {Color.GRAY_200.value}",
+            white_space="nowrap",
+        )
+
+def table_header_cell(content):
+    """Componente reutilizable para headers de tabla"""
+    return rx.table.column_header_cell(
+        content,
+        padding="0px 3px",
+        font_size="0.6rem",
+        font_weight="600",
+        color=Color.GRAY_700.value,
+        background=Color.GRAY_50.value,
+        height="18px",
+        line_height="1",
+        border_bottom=f"1px solid {Color.GRAY_300.value}",
+        white_space="nowrap",
+    )
+
+def table_link_cell(content, url, compact_mode=True):
+    """Componente reutilizable para celdas con enlaces"""
+    if compact_mode:
+        return rx.table.cell(
+            rx.link(
+                content,
+                href=url,
+                target="_blank",
+                color=Color.PRIMARY_BLUE.value,
+                text_decoration="none",
+                _hover={"text_decoration": "underline"},
+                font_size="0.8rem",
+            ),
+            padding="2px 6px",
+            height="24px",
+            line_height="1.2",
+            border_bottom=f"1px solid {Color.GRAY_200.value}",
+            white_space="nowrap",
+        )
+    else:
+        return rx.table.cell(
+            rx.link(
+                content,
+                href=url,
+                target="_blank",
+                color=Color.PRIMARY_BLUE.value,
+                text_decoration="none",
+                _hover={"text_decoration": "underline"},
+            ),
+            padding="8px 12px",
+            border_bottom=f"1px solid {Color.GRAY_200.value}",
+            white_space="nowrap",
+        )
+
+def search_bar_component(placeholder, search_term, on_change, on_search):
+    """Componente reutilizable para la barra de búsqueda"""
+    return rx.hstack(
+        rx.input(
+            placeholder=placeholder,
+            value=search_term,
+            on_change=on_change,
+            width="300px",
+            padding="8px 12px",
+            border=f"1px solid {Color.GRAY_300.value}",
+            border_radius="4px",
+            font_size="0.9rem",
+            background="white",
+            _focus={
+                "border_color": Color.PRIMARY_BLUE.value,
+                "outline": "none",
+                "box_shadow": f"0 0 0 2px rgba(0, 122, 255, 0.1)"
+            }
+        ),
+        rx.button(
+            "Buscar",
+            on_click=on_search,
+            background=Color.PRIMARY_BLUE.value,
+            color="white",
+            padding="8px 16px",
+            border_radius="4px",
+            border="none",
+            cursor="pointer",
+            font_size="0.9rem",
+            font_weight="500",
+            _hover={
+                "background": Color.NAVY.value
+            }
+        ),
+        widhth="50%",
+        spacing="2",
+        margin_bottom="20px",
+    )
+
+def select_rol():
+    """Componente selector de rol"""
+    return rx.select(
+        AppState.user_data.roles_names,
+        placeholder="Seleccionar rol",
+        value=AppState.user_data.current_rol_name,
+        size="2",
+        variant="surface",
+        color_scheme="gray",
+        background="white",
+        color=Color.GRAY_700.value,
+        width="160px",
+    )
+
+def select_area():
+    """Componente selector de área"""  
+    return rx.select(
+        AppState.user_data.areas_names,
+        placeholder="Seleccionar área",
+        value=AppState.user_data.current_area_name,
+        on_change=lambda value: AppState.set_current_area(value),
+        size="2",
+        variant="surface", 
+        color_scheme="gray",
+        background="white",
+        color=Color.GRAY_700.value,
+        width="160px",
+    )
+
+def table_certificados():
+    """Tabla de certificados con componentes reutilizables"""
     return rx.vstack(
-        search_bar_component(),
+        search_bar_component(
+            placeholder="Buscar certificados...",
+            search_term=AppState.search_text,
+            on_change=AppState.set_search_text,
+            on_search=AppState.execute_search
+        ),
         rx.table.root(
             rx.table.header(
                 rx.table.row(
-                    rx.table.column_header_cell("Rubro", width="8%"),
-                    rx.table.column_header_cell("Sub Rubro", width="10%"),
-                    rx.table.column_header_cell("Matricula", width="10%"),
-                    rx.table.column_header_cell("Familia", width="12%"),
-                    rx.table.column_header_cell("Razon Social", width="25%"),
-                    rx.table.column_header_cell("Origen", width="8%"),
-                    rx.table.column_header_cell("Vencimiento", width="12%"),
-                    rx.table.column_header_cell("Estado", width="8%"),
-                    rx.table.column_header_cell("Id Familia", width="7%"),
-                ),
+                    table_header_cell("N°"),
+                    table_header_cell("Cliente"),
+                    table_header_cell("Familia"),
+                    table_header_cell("Estado"),
+                    table_header_cell("Fecha Emisión"),
+                    table_header_cell("Vencimiento"),
+                )
             ),
             rx.table.body(
-                rx.cond(
-                    AppState.fams_show.length() > 0,
-                    rx.foreach(AppState.fams_show, lambda fam: rx.table.row(
-                    rx.table.cell(fam.rubro, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}),
-                    rx.table.cell(fam.subrubro, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}),
-                    rx.table.cell(fam.client, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}),
-                    rx.table.cell(fam.family, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}),
-                    rx.table.cell(fam.client, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}),
-                    rx.table.cell(fam.origen, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}),
-                    rx.table.cell(format_date_component(fam.expirationdate), 
-                                    style={"white-space": "nowrap", "overflow": "hidden", "text-overflow": "ellipsis"}),
-                    rx.table.cell(fam.status, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}),
-                    rx.table.cell(rx.link(
-                        fam.id,
-                        href=f"https://panel.bvarg.com.ar/app/familias/{fam.id}",
-                        is_external=True,
-                        ), style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}
-                    ),
-                    style={
-                        "_hover": {"bg": rx.color("gray", 3)},
-                        "height": "40px",
-                        "max-height": "40px",
-                        "overflow": "hidden"
-                    },
-                    align="center",
-                )),
-                    # Mostrar mensaje cuando no hay resultados
-                    rx.table.row(
-                        rx.table.cell(
-                            rx.text("Ningún resultado encontrado", 
-                                   style={"font-style": "italic", "color": "gray"}),
-                            col_span=9,
-                            text_align="center",
-                            padding="20px"
-                        )
+                rx.foreach(
+                    AppState.certs_show,
+                    lambda cert: rx.table.row(
+                        table_cell(f"{cert.num}/{cert.year}"),
+                        table_cell(cert.client),
+                        table_cell(cert.family.family),
+                        table_cell(cert.status),
+                        table_cell(cert.issuedate),
+                        table_cell(cert.vencimiento),
+                        cursor="pointer",
+                        _hover={"background": Color.GRAY_50.value},
                     )
                 )
             ),
@@ -218,95 +248,170 @@ def table_familias()->rx.Component:
         ),
         width="100%",
     )
-   
-def table_cotizaciones()->rx.Component:
+
+def table_familias():
+    """Tabla de familias con componentes reutilizables"""
     return rx.vstack(
-        search_bar_component(height="40px"),
-        rx.cond(
-            # Mostrar spinner mientras se cargan los datos (cuando cots_show está vacío pero se está cargando)
-            (AppState.cots_show.length() == 0) & (AppState.values["search_value"] == ""),
-            rx.vstack(
-                rx.spinner(
-                    size="3",
-                    color="blue.500",
-                    empty_color="gray.200",
-                    thickness="4px",
-                    speed="0.65s"
-                ),
-                rx.text("Cargando cotizaciones...", 
-                       style={"color": colors.TextColor.MUTED.value, "font_style": "italic"}),
-                spacing="3",
-                align="center",
-                padding="40px",
-                width="100%"
+        search_bar_component(
+            placeholder="Buscar familias...",
+            search_term=AppState.search_text,
+            on_change=AppState.set_search_text,
+            on_search=AppState.execute_search
+        ),
+        rx.table.root(
+            rx.table.header(
+                rx.table.row(
+                    table_header_cell("Familia"),
+                    table_header_cell("Producto"),
+                    table_header_cell("Cliente"),
+                    table_header_cell("Área"),
+                    table_header_cell("Estado"),
+                    table_header_cell("Vencimiento"),
+                )
             ),
-            # Mostrar tabla cuando hay datos o cuando hay búsqueda activa
-            rx.table.root(
-                rx.table.header(
-                    rx.table.row(
-                        rx.table.column_header_cell("Número", width="15%"), #1
-                        rx.table.column_header_cell("Fecha", width="15%"), #2
-                        rx.table.column_header_cell("Razon Social", width="35%"), #3
-                        rx.table.column_header_cell("Estado", width="20%"), #4
-                        rx.table.column_header_cell("Id Cotización", width="15%"), #5
-                    ),
-                ),
-                rx.table.body(
-                    rx.cond(
-                        AppState.cots_show.length() > 0,
-                        rx.foreach(AppState.cots_show, lambda cot: rx.table.row(
-                        rx.table.cell(cot.num + '-' + cot.year, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}), #1
-                        rx.table.cell(format_date_component(cot.issuedate),
-                                        style={"white-space": "nowrap", "overflow": "hidden", "text-overflow": "ellipsis"}), #2
-                        rx.table.cell(cot.client, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}), #3
-                        #rx.table.cell(cot.familys),
-                        rx.table.cell(cot.status, style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"}), #4
-                        rx.table.cell(rx.link(
-                            cot.id,
-                            href=f"https://panel.bvarg.com.ar/app/cotizaciones/{cot.id}",
-                            is_external=True,
-                            ), style={"overflow": "hidden", "text-overflow": "ellipsis", "white-space": "nowrap"} #5
-                        ),
-                        style={
-                            "_hover": {"bg": rx.color("gray", 3)},
-                            "height": "40px",
-                            "max-height": "40px",
-                            "overflow": "hidden"
-                        },
-                        align="center",
-                    )),
-                        # Mostrar mensaje cuando no hay resultados
-                        rx.table.row(
-                            rx.table.cell(
-                                rx.text("Ningún resultado encontrado", 
-                                       style={"font-style": "italic", "color": "gray"}),
-                                col_span=5,
-                                text_align="center",
-                                padding="20px"
-                            )
-                        )
+            rx.table.body(
+                rx.foreach(
+                    AppState.fams_show,
+                    lambda fam: rx.table.row(
+                        table_cell(fam.family),
+                        table_cell(fam.product),
+                        table_cell(fam.client),
+                        table_cell(fam.area),
+                        table_cell(fam.status),
+                        table_cell(fam.expirationdate),
+                        cursor="pointer",
+                        _hover={"background": Color.GRAY_50.value},
                     )
-                ),
-                variant="surface",
-                size="1",
-                width="100%",
-            )
+                )
+            ),
+            variant="surface",
+            size="1",
         ),
         width="100%",
     )
 
-def calendar_component() -> rx.Component:         
+def table_cotizaciones():
+    """Tabla de cotizaciones con componentes reutilizables"""
     return rx.vstack(
-            rx.heading("Calendario", size="4"),
-            calendar(
-                on_change=AppState.on_click_day_calendar,
-    
+        search_bar_component(
+            placeholder="Buscar cotizaciones...",
+            search_term=AppState.search_text,
+            on_change=AppState.set_search_text,
+            on_search=AppState.execute_search
+        ),
+        rx.table.root(
+            rx.table.header(
+                rx.table.row(
+                    table_header_cell("N°"),
+                    table_header_cell("Cliente"),
+                    rx.cond(
+                        AppState.user_data.current_area_name == "TODAS",
+                        table_header_cell("Área"),
+                        rx.fragment()
+                    ),
+                    table_header_cell("Estado"),
+                    table_header_cell("Fecha Emisión"),
+                    rx.table.column_header_cell(
+                        "📁",
+                        padding="0px",
+                        font_size="0.8rem",
+                        font_weight="600",
+                        color=Color.GRAY_700.value,
+                        background=Color.GRAY_50.value,
+                        height="18px",
+                        line_height="1",
+                        border_bottom=f"1px solid {Color.GRAY_300.value}",
+                        white_space="nowrap",
+                        text_align="center",
+                        width="35px",
+                        min_width="35px",
+                        max_width="35px",
+                    ),
+                    rx.table.column_header_cell(
+                        "🔗",
+                        padding="0px",
+                        font_size="0.8rem",
+                        font_weight="600",
+                        color=Color.GRAY_700.value,
+                        background=Color.GRAY_50.value,
+                        height="18px",
+                        line_height="1",
+                        border_bottom=f"1px solid {Color.GRAY_300.value}",
+                        white_space="nowrap",
+                        text_align="center",
+                        width="35px",
+                        min_width="35px",
+                        max_width="35px",
+                    ),
+                )
             ),
-            rx.spacer(),
-            rx.link("Volver al inicio", 
-                    href="/"
+            rx.table.body(
+                rx.foreach(
+                    AppState.cots_show,
+                    lambda cot: rx.table.row(
+                        table_cell(f"{cot.num}/{cot.year}"),
+                        table_cell(cot.client),
+                        rx.cond(
+                            AppState.user_data.current_area_name == "TODAS",
+                            table_cell(cot.area),
+                            rx.fragment()
+                        ),
+                        table_cell(cot.status),
+                        table_cell(format_date_reflex(cot.issuedate)),
+                        rx.table.cell(
+                            rx.cond(
+                                cot.drive_file_id != "",
+                                rx.link(
+                                    rx.icon("eye", size=16, display="inline"),
+                                    href=f"https://drive.google.com/file/d/{cot.drive_file_id}/view",
+                                    target="_blank",
+                                    text_decoration="none",
+                                    _hover={"opacity": "0.7"},
+                                    on_click=rx.stop_propagation,
+                                ),
+                                rx.text("-", color=Color.GRAY_400.value, font_size="0.7rem")
+                            ),
+                            padding="1px",
+                            height="18px",
+                            line_height="1",
+                            border_bottom=f"1px solid {Color.GRAY_200.value}",
+                            white_space="nowrap",
+                            text_align="center",
+                            width="35px",
+                            min_width="35px",
+                            max_width="35px",
+                            vertical_align="middle",
+                        ),
+                        rx.table.cell(
+                            rx.link(
+                                rx.icon("external_link", size=16, display="inline"),
+                                href=f"https://panel.bvarg.com.ar/app/cotizaciones/{cot.id}",
+                                target="_blank",
+                                text_decoration="none",
+                                _hover={"opacity": "0.7"},
+                                on_click=rx.stop_propagation,
+                            ),
+                            padding="1px",
+                            height="18px",
+                            line_height="1",
+                            border_bottom=f"1px solid {Color.GRAY_200.value}",
+                            white_space="nowrap",
+                            text_align="center",
+                            width="35px",
+                            min_width="35px",
+                            max_width="35px",
+                            vertical_align="middle",
+                        ),
+                        cursor="pointer",
+                        _hover={"background": Color.GRAY_50.value},
+                        on_click=lambda: rx.redirect(f"/cotizaciones/{cot.id}"),
+                    )
+                )
             ),
-            rx.text(AppState.get_date),        
-            background= "rgba(255, 255, 255, 0.9)",
-            width="25%",
-        )
+            variant="surface",
+            size="1",
+            width="100%",
+            style={"table_layout": "fixed"},
+        ),
+        width="100%",
+    )

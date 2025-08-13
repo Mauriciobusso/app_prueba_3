@@ -9,7 +9,6 @@ from ..api.algolia_utils import algolia_to_cot, algolia_to_certs, algolia_to_fam
 from ..utils import User, Fam, Certs, Cot, buscar_fams, buscar_cots
 from datetime import datetime
 import time
-
 import asyncio
 import traceback
 
@@ -25,6 +24,10 @@ class AppState(rx.State):
     id_token: str = rx.LocalStorage()
     user_email: str = rx.LocalStorage()     # Nuevo: persistir email del usuario
     session_valid: bool = False             # Nuevo: estado de sesión (no persistente por limitación de Reflex)
+    _session_internal_raw: str = rx.LocalStorage("false")  # Almacenar como string en LocalStorage
+    _last_activity_raw: str = rx.LocalStorage("0.0")       # Almacenar como string en LocalStorage
+    _last_auth_log: float = 0.0            # Para throttling de logs de autenticación
+    _last_no_auth_log: float = 0.0         # Para throttling de logs sin autenticación
     user_data: User = User()
     roles: list = []
     areas: list = []
@@ -39,9 +42,15 @@ class AppState(rx.State):
 
     cots: list[Cot] = []            # Lista para almacenar las cotizaciones
     cots_show: list[Cot] = []       # Lista para mostrar las cotizaciones
+    
+    # Cotización de detalle para la vista individual
+    cotizacion_detalle: Cot = Cot()
 
     # Campo de texto de búsqueda temporal (no ejecuta búsqueda automáticamente)
     search_text: str = ""
+    
+    # Tema (modo oscuro/claro) - DISABLED FOR NOW, KEEP FOR FUTURE USE
+    # dark_mode: bool = rx.LocalStorage(False)  # Persistir preferencia del tema
 
     # Paginación
     cots_page: int = 0
@@ -63,6 +72,32 @@ class AppState(rx.State):
         "limit": 100,
         "filters": [],
     }
+
+    @rx.var
+    def session_internal(self) -> bool:
+        """Devuelve el estado de sesión interna como booleano."""
+        try:
+            if self._session_internal_raw.lower() in ('true', '1', 'yes'):
+                return True
+            return False
+        except:
+            return False
+    
+    @rx.var  
+    def last_activity(self) -> float:
+        """Devuelve el timestamp de última actividad como float."""
+        try:
+            return float(self._last_activity_raw)
+        except:
+            return 0.0
+
+    def set_session_internal(self, value: bool):
+        """Establece el estado de sesión interna."""
+        self._session_internal_raw = "true" if value else "false"
+    
+    def set_last_activity(self, value: float):
+        """Establece el timestamp de última actividad."""
+        self._last_activity_raw = str(value)
 
     @rx.event
     async def on_click_day_calendar(self, date: str):
@@ -116,7 +151,7 @@ class AppState(rx.State):
         
         # Verificar si hay un email persistente (sesión anterior)
         if self.user_email and not self.id_token:
-            print(f"� Email persistente encontrado: {self.user_email}")
+            print(f"📧 Email persistente encontrado: {self.user_email}")
             print("⚠️  Pero no hay token activo, requiere nueva autenticación")
             
         # Si hay token, verificar autenticación
@@ -124,6 +159,7 @@ class AppState(rx.State):
             print("🔑 Token encontrado, verificando autenticación...")
             try:
                 if self.is_authenticated:
+                    print("🚀 Iniciando carga rápida de datos del usuario...")
                     await self.initialize_user()
                     print("✅ Usuario inicializado, esperando carga específica de página")
                 else:
@@ -138,33 +174,63 @@ class AppState(rx.State):
 
     @rx.var
     def is_authenticated(self) -> bool:
-        """Verifica si el usuario está autenticado."""
-        try:
-            if not self.id_token:
-                return False
-                
-            # Verificar el token con Google
-            token_data = json.loads(self.id_token)
-            verify_oauth2_token(
-                token_data["credential"],
-                requests.Request(),
-                CLIENT_ID,
-            )
+        """Verifica si el usuario está autenticado con sesión interna persistente."""
+        import time
+        current_time = time.time()
+        
+        # Si hay sesión interna válida, actualizar actividad y continuar
+        if self.session_internal and self.user_email:
+            # Solo verificar áreas si ya están cargadas para evitar bloqueos
+            if hasattr(self.user_data, 'areas_names') and self.user_data.areas_names is not None:
+                if not self.user_data.areas_names:
+                    return False
+            
+            # Actualizar timestamp de actividad cada vez que se verifica autenticación
+            self.set_last_activity(current_time)
+            # Solo mostrar log cada 30 segundos para reducir spam
+            if current_time - self._last_auth_log > 30:
+                self._last_auth_log = current_time
             return True
-        except json.JSONDecodeError as e:
-            print(f"❌ Error al decodificar token JSON: {e}")
-            return False
-        except Exception as e:
-            # Si el token expiró, simplemente retornar False sin limpiar aún
-            if "expired" in str(e).lower() or "invalid" in str(e).lower():
-                print(f"⏰ Token expirado o inválido: {e}")
-            else:
-                print(f"❌ Error de autenticación: {e}")
-            return False
+        
+        # Si no hay sesión interna pero hay token de Google, intentar validar con Google una vez
+        if self.id_token and not self.session_internal:
+            try:
+                token_data = json.loads(self.id_token)
+                decoded_token = verify_oauth2_token(
+                    token_data["credential"],
+                    requests.Request(),
+                    CLIENT_ID,
+                )
+                
+                # Si el token es válido, crear sesión interna
+                email = decoded_token.get("email", "")
+                if email:
+                    self.set_session_internal(True)
+                    self.set_last_activity(current_time)
+                    self.user_email = email
+                    return True
+                    
+            except json.JSONDecodeError as e:
+                pass
+            except Exception as e:
+                if "expired" in str(e).lower() or "invalid" in str(e).lower():
+                    # Si hay una sesión interna previa y email, mantenerla
+                    if self.user_email and self.session_internal:
+                        self.set_last_activity(current_time)
+                        return True
+        
+        # Si llegamos aquí, no hay autenticación válida
+        if current_time - self._last_no_auth_log > 10:
+            self._last_no_auth_log = current_time
+        return False
 
-    def on_success(self, id_token: dict):
+    @rx.event
+    async def on_success(self, id_token: dict):
         """Callback de autenticación exitosa."""
         try:
+            import time
+            current_time = time.time()
+            
             self.id_token = json.dumps(id_token)
             
             # Extraer información del token para persistencia
@@ -175,20 +241,28 @@ class AppState(rx.State):
                 CLIENT_ID,
             )
             
-            # Guardar email para identificación persistente
-            self.user_email = decoded_token.get("email", "")
+            # Guardar email para identificación persistente y crear sesión interna
+            email = decoded_token.get("email", "")
+            self.user_email = email
+            self.set_session_internal(True)  # Crear sesión interna persistente
+            self.set_last_activity(current_time)
             
-            print(f"✅ Autenticación exitosa para: {self.user_email}")
-            return AppState.initialize_user
+            print(f"✅ Autenticación exitosa y sesión interna creada para: {email}")
+            
+            # Inicializar usuario después de autenticación exitosa (skip auth check since we just authenticated)
+            yield AppState.initialize_user(skip_auth_check=True)
         except Exception as e:
             print(f"❌ Error en callback de autenticación: {e}")
-            return None
+            # Limpiar sesión si hay error
+            self.set_session_internal(False)
 
     @rx.event
     async def clear_session(self):
         """Limpia toda la información de sesión."""
         print("🧹 Limpiando sesión...")
         self.id_token = ""
+        self.set_session_internal(False)  # Limpiar sesión interna
+        self.set_last_activity(0.0)
         # Mantener el email para mostrar al usuario que se puede reconectar
         # self.user_email = ""  # No limpiar para mostrar último usuario
         self.user_data = User()
@@ -202,6 +276,8 @@ class AppState(rx.State):
         # Limpiar toda la información de sesión
         self.id_token = ""
         self.user_email = ""
+        self.set_session_internal(False)  # Limpiar sesión interna
+        self.set_last_activity(0.0)
         self.roles = []
         self.areas = []
         self.user_data = User()
@@ -240,9 +316,9 @@ class AppState(rx.State):
             # Marcar como procesado
             firestore_queue.task_done()
 
-    async def initialize_user(self):
+    async def initialize_user(self, skip_auth_check: bool = False):
         """Inicializa los datos del usuario desde Firestore."""
-        if not self.is_authenticated:
+        if not skip_auth_check and not self.is_authenticated:
             print("No se pudo autenticar.")
             return
 
@@ -262,21 +338,43 @@ class AppState(rx.State):
             if email:
                 print(f"🔄 Inicializando usuario: {email}")
                 
-                # Obtener datos iniciales del usuario
+                # Obtener datos iniciales del usuario - Primera carga rápida
+                print("📋 Obteniendo datos del usuario...")
                 user_data = firestore_api.get_user(email)
                 self.user_data.data = user_data
                 
+                # Cargar roles en paralelo
+                print("👥 Cargando roles...")
                 self.roles = firestore_api.get_roles()
                 self.user_data.roles_names = sorted([role['name'] for role in self.roles if role['id'] in user_data.get('roles', [])])
                 self.user_data.current_rol = user_data.get("currentRole", "")
                 self.user_data.current_rol_name = firestore_api.get_rol_name(self.user_data.current_rol)
                 
+                # Cargar áreas de forma optimizada
+                print("🌍 Cargando áreas...")
                 self.areas = firestore_api.get_areas()
-                area_names = sorted([area['name'] for area in self.areas if area['id'] in user_data.get('areas', [])])
-                # Agregar "TODAS" como primera opción
-                self.user_data.areas_names = ["TODAS"] + area_names
-                self.user_data.current_area = user_data.get("currentArea", "")
-                self.user_data.current_area_name = firestore_api.get_area_name(self.user_data.current_area) if self.user_data.current_area else "TODAS"
+                
+                # Procesar áreas inmediatamente después de obtenerlas
+                user_area_ids = user_data.get('areas', [])
+                if user_area_ids:
+                    area_names = sorted([area['name'] for area in self.areas if area['id'] in user_area_ids])
+                    self.user_data.areas_names = area_names
+                    self.user_data.current_area = user_data.get("currentArea", "")
+                    self.user_data.current_area_name = firestore_api.get_area_name(self.user_data.current_area) if self.user_data.current_area else "TODAS"
+                    
+                    print(f"✅ Áreas cargadas: {len(area_names)} áreas disponibles")
+                else:
+                    # Usuario sin áreas asignadas
+                    self.user_data.areas_names = []
+                    self.user_data.current_area = ""
+                    self.user_data.current_area_name = ""
+                    print("⚠️  Usuario sin áreas asignadas")
+                
+                # Verificar que el usuario tenga áreas asignadas
+                if not self.user_data.areas_names:
+                    print(f"❌ Usuario {email} sin áreas asignadas")
+                    await self.clear_session()
+                    return
                 
 
             # Configurar listener para cambios en Firestore
@@ -292,10 +390,36 @@ class AppState(rx.State):
                 print("✅ Listener ya configurado.")
                 
             print(f"✅ Usuario inicializado correctamente: {email}")
-
+                
         except Exception as e:
             print(f"❌ Error al inicializar usuario: {e}")
             await self.clear_session()
+
+    @rx.event
+    async def update_activity(self):
+        """Actualiza el timestamp de última actividad para mantener la sesión activa."""
+        import time
+        if self.session_internal:
+            self.set_last_activity(time.time())
+    
+    @rx.event
+    async def check_user_areas(self):
+        """Verifica si el usuario tiene áreas asignadas y cierra sesión si no las tiene."""
+        if self.session_internal and self.user_email:
+            # Verificar que el usuario tenga áreas asignadas
+            if hasattr(self.user_data, 'areas_names') and not self.user_data.areas_names:
+                print(f"❌ Usuario {self.user_email} sin áreas asignadas - cerrando sesión automáticamente")
+                await self.logout()
+                return False
+            return True
+        return False
+
+    @rx.event
+    async def keepalive_ping(self):
+        """Mantiene la sesión activa actualizando la actividad."""
+        if self.session_internal:
+            await self.update_activity()
+            print(f"🔄 Keepalive ping - sesión mantenida para: {self.user_email}")
     
     @rx.event
     async def set_current_rol(self, rol_name: str):
@@ -311,6 +435,9 @@ class AppState(rx.State):
     @rx.event
     async def set_current_area(self, area_name: str):
         """Establece el área actual del usuario y actualiza las tablas."""
+        # Actualizar actividad del usuario
+        await self.update_activity()
+        
         try:
             email = self.user_data.data.get("email", "")
             self.user_data.current_area_name = area_name
@@ -393,6 +520,115 @@ class AppState(rx.State):
                 if area_info.get("name") == name:
                     return area_info.get("id")
         return None  # Retorna None si no se encuentra el título
+    
+    @rx.event
+    async def cargar_cotizacion_detalle(self):
+        """Carga los detalles de una cotización específica usando el parámetro de ruta."""
+        try:
+            # Obtener el parámetro cot_id de la URL actual usando la nueva API
+            cot_id = ""
+            try:
+                # Usar la nueva API de router
+                url_path = self.router.url.path if hasattr(self.router.url, 'path') else str(self.router.url)
+                # Extraer el ID de la URL /cotizaciones/[cot_id]
+                if "/cotizaciones/" in url_path:
+                    parts = url_path.split("/")
+                    if len(parts) >= 3:
+                        cot_id = parts[-1]  # Último segmento de la URL
+                        
+                # Fallback: intentar con params si está disponible
+                if not cot_id and hasattr(self.router, 'page') and hasattr(self.router.page, 'params'):
+                    cot_id = self.router.page.params.get("cot_id", "")
+            except Exception as e:
+                print(f"⚠️ Error extrayendo parámetro de URL: {e}")
+                cot_id = ""
+                    
+            print(f"🔍 Cargando cotización detalle: {cot_id}")
+            
+            if not cot_id or cot_id == "undefined":
+                print("❌ No se encontró parámetro cot_id válido en la URL")
+                self.cotizacion_detalle = Cot()
+                return
+            
+            # Buscar primero en la lista actual
+            cotizacion_encontrada = None
+            for cot in self.cots:
+                if cot.id == cot_id:
+                    cotizacion_encontrada = cot
+                    break
+            
+            # Si no se encontró en la lista actual, buscar en la lista mostrada
+            if not cotizacion_encontrada:
+                for cot in self.cots_show:
+                    if cot.id == cot_id:
+                        cotizacion_encontrada = cot
+                        break
+            
+            # Si aún no se encontró, buscar en Firestore
+            if not cotizacion_encontrada:
+                print(f"⚡ Cotización no encontrada en listas actuales, buscando en Firestore...")
+                # Aquí podrías implementar una búsqueda específica en Firestore
+                # Por ahora, usaremos una cotización vacía con el ID
+                cotizacion_encontrada = Cot(id=cot_id)
+            
+            self.cotizacion_detalle = cotizacion_encontrada
+            print(f"✅ Cotización detalle cargada: {cotizacion_encontrada.num}-{cotizacion_encontrada.year} (ID: {cot_id})")
+            
+        except Exception as e:
+            print(f"❌ Error al cargar cotización detalle: {e}")
+            self.cotizacion_detalle = Cot()
+    
+    @rx.var
+    def cotizacion_detalle_fecha_formateada(self) -> str:
+        """Formatea la fecha de la cotización de detalle para mostrar."""
+        date_str = self.cotizacion_detalle.issuedate
+        if not date_str:
+            return "No especificada"
+        
+        # Si ya está en formato dd/mm/yyyy
+        if "/" in date_str and len(date_str.split("/")) == 3:
+            return date_str
+        
+        # Si está en formato yyyy-mm-dd, convertir
+        if "-" in date_str and len(date_str) == 10:
+            try:
+                year, month, day = date_str.split("-")
+                return f"{day}/{month}/{year}"
+            except ValueError:
+                return date_str
+        
+        return date_str
+    
+    def format_date_display(self, date_str: str) -> str:
+        """Formatea fechas para mostrar en la interfaz."""
+        if not date_str:
+            return "No especificada"
+        
+        # Si ya está en formato dd/mm/yyyy
+        if "/" in date_str and len(date_str.split("/")) == 3:
+            return date_str
+        
+        # Si está en formato yyyy-mm-dd, convertir
+        if "-" in date_str and len(date_str) == 10:
+            try:
+                year, month, day = date_str.split("-")
+                return f"{day}/{month}/{year}"
+            except ValueError:
+                return date_str
+        
+        return date_str
+    
+    # DARK MODE FUNCTIONALITY - DISABLED FOR NOW, KEEP FOR FUTURE USE
+    # @rx.event
+    # def toggle_dark_mode(self):
+    #     """Cambia entre modo oscuro y claro."""
+    #     self.dark_mode = not self.dark_mode
+    #     print(f"🎨 Cambiando a modo {'oscuro' if self.dark_mode else 'claro'}")
+    
+    # @rx.var
+    # def theme_appearance(self) -> str:
+    #     """Devuelve el tema actual para la aplicación."""
+    #     return "dark" if self.dark_mode else "light"
     
     @rx.event(background=True)
     async def get_certs(self):
@@ -575,17 +811,56 @@ class AppState(rx.State):
     @rx.event
     async def execute_search(self):
         """Ejecuta la búsqueda usando el texto almacenado en search_text."""
+        # Actualizar actividad del usuario
+        await self.update_activity()
+        
         try:
-            await self.filter_values(self.search_text)
+            # Si el texto de búsqueda está vacío o es solo espacios, limpiar búsqueda
+            search_value = self.search_text.strip() if self.search_text else ""
+            if not search_value:
+                print("🧹 Limpiando búsqueda - texto vacío")
+                await self.clear_search()
+            else:
+                await self.filter_values(search_value)
         except Exception as e:
             print(f"❌ Error en búsqueda: {e}")
+
+    @rx.event
+    async def clear_search(self):
+        """Limpia la búsqueda y restaura todos los datos."""
+        try:
+            print("🧹 Limpiando búsqueda y restaurando datos completos")
+            
+            # Limpiar el texto de búsqueda
+            self.search_text = ""
+            self.values["search_value"] = ""
+            
+            # Recargar datos completos según la página actual
+            if self.current_page == "certificaciones":
+                await self.update_certs_show()
+            elif self.current_page == "familias":
+                await self.update_fams_show()
+            elif self.current_page == "cotizaciones":
+                await self.update_cots_show()
+            else:
+                print(f"⚠️  Página no reconocida para limpieza: {self.current_page}")
+                
+        except Exception as e:
+            print(f"❌ Error al limpiar búsqueda: {e}")
 
     @rx.event
     async def filter_values(self, search_value: str):
         """Filtra valores según la página actual."""
         try:
-            self.values["search_value"] = search_value
-            print(f"🔍 Filtrando '{search_value}' en página: {self.current_page}")
+            # Si el valor de búsqueda está vacío o es solo espacios, limpiar búsqueda
+            clean_search_value = search_value.strip() if search_value else ""
+            if not clean_search_value:
+                print("🧹 Valor de búsqueda vacío - limpiando búsqueda")
+                await self.clear_search()
+                return
+            
+            self.values["search_value"] = clean_search_value
+            print(f"🔍 Filtrando '{clean_search_value}' en página: {self.current_page}")
             
             # Aplicar filtro según la página actual
             if self.current_page == "certificaciones":
@@ -736,8 +1011,10 @@ class AppState(rx.State):
                 )  
                 
                 if self.cots:
+                    # Ordenar por número de cotización (año descendente, número descendente)
+                    self.cots = sorted(self.cots, key=lambda cot: (int(cot.year) if cot.year.isdigit() else 0, int(cot.num) if cot.num.isdigit() else 0), reverse=True)
                     self.cots_show = self.cots[:30]  # Mostrar solo las primeras 30 cotizaciones
-                    print(f"✅ {len(self.cots)} cotizaciones obtenidas correctamente, mostrando {len(self.cots_show)}")
+                    print(f"✅ {len(self.cots)} cotizaciones obtenidas correctamente y ordenadas por número, mostrando {len(self.cots_show)}")
                 else:
                     self.cots_show = []
                     print("⚠️  No se encontraron cotizaciones")
@@ -830,7 +1107,7 @@ class AppState(rx.State):
                     # Usar datos existentes si no hay filtros específicos
                     pass
             
-            # Ordenar las cotizaciones por fecha de emision
+            # Ordenar las cotizaciones por número (año descendente, número descendente)
             if self.values["sorted_value"] == "issuedate":
                 self.cots_show = sorted(
                     self.cots,
@@ -840,7 +1117,8 @@ class AppState(rx.State):
             elif self.values["sorted_value"] == "client":
                 self.cots_show = sorted(self.cots, key=lambda f: f.client)
             else:
-                self.cots_show = self.cots
+                # Ordenamiento por defecto: número de cotización (año descendente, número descendente)
+                self.cots_show = sorted(self.cots, key=lambda cot: (int(cot.year) if cot.year.isdigit() else 0, int(cot.num) if cot.num.isdigit() else 0), reverse=True)
 
             # Si no usamos Algolia para la búsqueda, aplicar filtro local
             if not has_search or not algolia_api.enabled:
@@ -1060,6 +1338,8 @@ class AppState(rx.State):
         # Limpiar toda la información de sesión persistente
         self.id_token = ""
         self.user_email = ""
+        self.set_session_internal(False)  # Limpiar sesión interna
+        self.set_last_activity(0.0)
         self.session_valid = False
         self.roles = []
         self.areas = []

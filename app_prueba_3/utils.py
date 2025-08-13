@@ -121,3 +121,17 @@ def format_date(date_str: str) -> str:
             return date_str
     
     return date_str
+
+def format_date_reflex(date_str):
+    """Formato de fecha compatible con Reflex usando rx.cond"""
+    return rx.cond(
+        date_str.contains("-"),
+        # Si contiene guiones (formato YYYY-mm-dd), reformatear a dd/mm/YYYY
+        rx.cond(
+            date_str.length() == 10,
+            date_str.split("-")[2] + "/" + date_str.split("-")[1] + "/" + date_str.split("-")[0],
+            date_str
+        ),
+        # Si no contiene guiones, devolver tal como está
+        date_str
+    )

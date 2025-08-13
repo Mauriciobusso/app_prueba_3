@@ -94,9 +94,119 @@ style = {
         "--color-border": Color.GRAY_700.value,
         "--color-border-light": Color.GRAY_800.value,
         "--color-border-strong": Color.GRAY_600.value,
+        
+        # Darker shadows for dark mode
+        "--shadow-sm": "0 1px 2px 0 rgba(0, 0, 0, 0.3)",
+        "--shadow": "0 1px 3px 0 rgba(0, 0, 0, 0.4), 0 1px 2px 0 rgba(0, 0, 0, 0.3)",
+        "--shadow-md": "0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3)",
+        "--shadow-lg": "0 10px 15px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -2px rgba(0, 0, 0, 0.3)",
+        "--shadow-xl": "0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 10px 10px -5px rgba(0, 0, 0, 0.3)",
     },
     
-    # Button styling - Modern Bureau Veritas design
+    # Avatar Styling - Modern Bureau Veritas
+    rx.avatar: {
+        "border": f"2px solid {Color.PRIMARY_BLUE.value}",
+        "box_shadow": "var(--shadow-md)",
+        "margin_top": "0.5em",
+    },
+
+    
+    # Typography styles - Modern text hierarchy
+    # Headings - Bureau Veritas inspired
+    ".heading-1": {
+        "font_size": "2.25rem",  # 36px
+        "font_weight": "700",
+        "line_height": "1.2",
+        "color": "var(--color-text-primary)",
+        "margin": "0 0 1rem 0",
+        "letter_spacing": "-0.025em",
+    },
+    
+    ".heading-2": {
+        "font_size": "1.875rem",  # 30px
+        "font_weight": "600",
+        "line_height": "1.3",
+        "color": "var(--color-text-primary)",
+        "margin": "0 0 0.75rem 0",
+        "letter_spacing": "-0.025em",
+    },
+    
+    ".heading-3": {
+        "font_size": "1.5rem",  # 24px
+        "font_weight": "600",
+        "line_height": "1.4",
+        "color": "var(--color-text-primary)",
+        "margin": "0 0 0.5rem 0",
+    },
+    
+    ".heading-4": {
+        "font_size": "1.25rem",  # 20px
+        "font_weight": "600",
+        "line_height": "1.5",
+        "color": "var(--color-text-primary)",
+        "margin": "0 0 0.5rem 0",
+    },
+    
+    # Body text variants
+    ".body-large": {
+        "font_size": "1.125rem",  # 18px
+        "line_height": "1.7",
+        "color": "var(--color-text-primary)",
+        "margin": "0 0 1rem 0",
+    },
+    
+    ".body": {
+        "font_size": "1rem",  # 16px
+        "line_height": "1.6",
+        "color": "var(--color-text-primary)",
+        "margin": "0 0 1rem 0",
+    },
+    
+    ".body-small": {
+        "font_size": "0.875rem",  # 14px
+        "line_height": "1.5",
+        "color": "var(--color-text-secondary)",
+        "margin": "0 0 0.75rem 0",
+    },
+    
+    # Utility text styles
+    ".text-muted": {
+        "color": "var(--color-text-muted)",
+    },
+    
+    ".text-primary": {
+        "color": "var(--color-primary)",
+        "font_weight": "600",
+    },
+    
+    ".text-success": {
+        "color": Color.SUCCESS.value,
+        "font_weight": "600",
+    },
+    
+    ".text-warning": {
+        "color": Color.WARNING.value,
+        "font_weight": "600",
+    },
+    
+    ".text-error": {
+        "color": Color.ERROR.value,
+        "font_weight": "600",
+    },
+    
+    # Professional quote styling
+    ".blockquote": {
+        "border_left": f"4px solid {Color.PRIMARY_BLUE.value}",
+        "padding": "1rem 1.5rem",
+        "margin": "1.5rem 0",
+        "background_color": f"{Color.GRAY_50.value}",
+        "font_style": "italic",
+        "font_size": "1.125rem",
+        "line_height": "1.7",
+        "color": "var(--color-text-secondary)",
+    },
+
+    # Button styles
     rx.button: {
         "font_family": "'Inter', sans-serif",
         "font_weight": "500",
@@ -132,81 +242,104 @@ style = {
         },
         
         "_focus": {
-            "outline": "none",
-            "box_shadow": f"0 0 0 3px {Color.PRIMARY_BLUE.value}40",  # 40% opacity
+            "outline": "2px solid var(--color-secondary)",
+            "outline_offset": "2px",
         },
         
         "_disabled": {
-            "background_color": Color.GRAY_300.value,
-            "color": Color.GRAY_500.value,
+            "opacity": "0.5",
             "cursor": "not-allowed",
             "transform": "none",
-            "box_shadow": "none",
         },
     },
     
-    # Link styling - Professional and accessible
+    # Link Styling - Modern and accessible
     rx.link: {
-        "color": "var(--color-primary)",
+        "color": "var(--color-text-brand)",
         "text_decoration": "none",
         "font_weight": "500",
-        "transition": "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-        "border_radius": "var(--radius-sm)",
-        "padding": "0.125rem 0.25rem",
-        "margin": "-0.125rem -0.25rem",
+        "transition": "all 0.2s ease",
+        "position": "relative",
         
         "_hover": {
-            "color": Color.NAVY.value,
-            "background_color": f"{Color.PRIMARY_BLUE.value}10",
-            "text_decoration": "none",
+            "color": "var(--color-primary)",
+            "text_decoration": "underline",
+            "text_decoration_thickness": "2px",
+            "text_underline_offset": "2px",
         },
         
         "_focus": {
-            "outline": "none",
-            "box_shadow": f"0 0 0 2px {Color.PRIMARY_BLUE.value}40",
+            "outline": "2px solid var(--color-secondary)",
+            "outline_offset": "2px",
+            "border_radius": "var(--radius-sm)",
         },
     },
     
-    # Table styling - Modern and clean (using class names)
-    ".rx-table": {
-        "width": "100%",
-        "border_collapse": "collapse",
+    # Heading Styling - Modern typography hierarchy
+    rx.heading: {
+        "color": "var(--color-text-primary)",
+        "font_weight": "600",
+        "line_height": "1.2",
+        "margin_bottom": "0.5em",
+        "letter_spacing": "-0.025em",
+    },
+    
+    # Text Styling - Optimized readability
+    rx.text: {
+        "color": "var(--color-text-primary)",
+        "line_height": "1.6",
+        "margin_bottom": "1em",
+    },
+    
+    # Badge/Label Styling - Modern pills
+    rx.badge: {
+        "background_color": Color.GRAY_100.value,
+        "color": "var(--color-text-secondary)",
+        "padding": "0.25rem 0.75rem",
+        "border_radius": "9999px",
+        "font_size": "0.75rem",
+        "font_weight": "600",
+        "text_align": "center",
+        "text_transform": "uppercase",
+        "letter_spacing": "0.05em",
+        "border": f"1px solid {Color.GRAY_200.value}",
+    },
+    
+    # Table Styling - Modern and clean
+    rx.table.root: {
         "background_color": "var(--color-surface)",
-        "border": "1px solid var(--color-border)",
         "border_radius": "var(--radius-lg)",
         "overflow": "hidden",
-        "box_shadow": "var(--shadow-sm)",
+        "box_shadow": "var(--shadow)",
+        "border": "1px solid var(--color-border)",
     },
     
-    "thead": {
+    rx.table.header: {
         "background_color": Color.GRAY_50.value,
-        "border_bottom": f"2px solid {Color.GRAY_200.value}",
+        "border_bottom": f"1px solid {Color.GRAY_200.value}",
     },
     
-    "th": {
+    rx.table.column_header_cell: {
         "padding": "0.75rem 1rem",
-        "text_align": "left",
         "font_weight": "600",
-        "color": "var(--color-text-primary)",
         "font_size": "0.875rem",
-        "letter_spacing": "0.05em",
+        "color": "var(--color-text-secondary)",
         "text_transform": "uppercase",
+        "letter_spacing": "0.05em",
     },
     
-    "td": {
+    rx.table.cell: {
         "padding": "1rem",
         "border_bottom": f"1px solid {Color.GRAY_100.value}",
-        "color": "var(--color-text-primary)",
         "font_size": "0.875rem",
-        "line_height": "1.5",
+        "color": "var(--color-text-primary)",
     },
     
-    "tbody tr:hover": {
-        "background_color": f"{Color.PRIMARY_BLUE.value}05",
-    },
-    
-    "tbody tr:last-child td": {
-        "border_bottom": "none",
+    rx.table.row: {
+        "transition": "background-color 0.2s ease",
+        "_hover": {
+            "background_color": Color.GRAY_50.value,
+        },
     },
     
     # Input Styling - Modern forms with excellent UX
@@ -327,49 +460,6 @@ style = {
         "font_weight": "600",
     },
     
-    # Typography classes - Modern text hierarchy
-    ".heading-1": {
-        "font_size": "2.25rem",  # 36px
-        "font_weight": "700",
-        "line_height": "1.2",
-        "color": "var(--color-text-primary)",
-        "margin": "0 0 1rem 0",
-        "letter_spacing": "-0.025em",
-    },
-    
-    ".heading-2": {
-        "font_size": "1.875rem",  # 30px
-        "font_weight": "600",
-        "line_height": "1.3",
-        "color": "var(--color-text-primary)",
-        "margin": "0 0 0.75rem 0",
-        "letter_spacing": "-0.025em",
-    },
-    
-    ".heading-3": {
-        "font_size": "1.5rem",  # 24px
-        "font_weight": "600",
-        "line_height": "1.4",
-        "color": "var(--color-text-primary)",
-        "margin": "0 0 0.5rem 0",
-    },
-    
-    ".body-large": {
-        "font_size": "1.125rem",  # 18px
-        "line_height": "1.7",
-        "color": "var(--color-text-primary)",
-        "margin": "0 0 1rem 0",
-    },
-    
-    ".text-muted": {
-        "color": "var(--color-text-muted)",
-    },
-    
-    ".text-primary": {
-        "color": "var(--color-primary)",
-        "font_weight": "600",
-    },
-    
     # Modern utility classes
     ".glass-effect": {
         "background": f"rgba(255, 255, 255, 0.9)",
@@ -386,120 +476,5 @@ style = {
         "background_clip": "text",
         "color": "transparent",
     },
-}
 
-# Modern Container Styles
-card_style = {
-    "background_color": "var(--color-surface)",
-    "border": "1px solid var(--color-border)",
-    "border_radius": "var(--radius-lg)",
-    "box_shadow": "var(--shadow)",
-    "padding": "1.5rem",
-}
-
-# Navigation Styles - Modern Bureau Veritas
-nav_style = {
-    "background_color": Color.PRIMARY_BLUE.value,
-    "color": Color.WHITE.value,
-    "padding": "1rem 1.5rem",
-    "box_shadow": "var(--shadow-md)",
-    "border_bottom": f"1px solid {Color.NAVY.value}",
-}
-
-# Container Styles - Modern spacing
-container_style = {
-    "max_width": "1280px",
-    "margin": "0 auto",
-    "padding": "2rem",
-    
-    "@media (max-width: 768px)": {
-        "padding": "1rem",
-    },
-}
-
-# Search Container - Modern design
-search_container_style = {
-    "background_color": "var(--color-surface)",
-    "padding": "1rem",
-    "border_radius": "var(--radius-lg)",
-    "box_shadow": "var(--shadow-sm)",
-    "margin_bottom": "1.5rem",
-    "border": "1px solid var(--color-border)",
-}
-
-# Button Styles - Various button types
-button_primary_style = {
-    "background_color": Color.PRIMARY_BLUE.value,
-    "color": Color.WHITE.value,
-    "border": "none",
-    "padding": "0.75rem 1.5rem",
-    "border_radius": "var(--radius-md)",
-    "font_weight": "600",
-    "cursor": "pointer",
-    "transition": "all 0.2s ease",
-    "font_family": "'Inter', sans-serif",
-    "font_size": "0.875rem",
-    
-    "_hover": {
-        "background_color": Color.NAVY.value,
-        "transform": "translateY(-1px)",
-        "box_shadow": "var(--shadow-md)",
-    },
-}
-
-button_secondary_style = {
-    "background_color": "transparent",
-    "color": Color.PRIMARY_BLUE.value,
-    "border": f"1px solid {Color.PRIMARY_BLUE.value}",
-    "padding": "0.75rem 1.5rem",
-    "border_radius": "var(--radius-md)",
-    "font_weight": "600",
-    "cursor": "pointer",
-    "transition": "all 0.2s ease",
-    "font_family": "'Inter', sans-serif",
-    "font_size": "0.875rem",
-    
-    "_hover": {
-        "background_color": Color.PRIMARY_BLUE.value,
-        "color": Color.WHITE.value,
-    },
-}
-
-# Theme toggle button style - DISABLED FOR NOW, KEEP FOR FUTURE USE
-# theme_button_style = {
-#     "background": "none",
-#     "border": "none",
-#     "cursor": "pointer",
-#     "padding": "0.5rem",
-#     "border_radius": "var(--radius-md)",
-#     "color": "var(--color-text-inverse)",
-#     "transition": "all 0.2s ease",
-#     "font_size": "1.125rem",
-#     
-#     "_hover": {
-#         "background_color": "rgba(255, 255, 255, 0.1)",
-#     },
-# }
-
-# Input field styles
-input_style = {
-    "width": "100%",
-    "padding": "0.75rem 1rem",
-    "border": "1px solid var(--color-border)",
-    "border_radius": "var(--radius-md)",
-    "font_size": "0.875rem",
-    "font_family": "'Inter', sans-serif",
-    "background_color": "var(--color-surface)",
-    "color": "var(--color-text-primary)",
-    "transition": "all 0.2s ease",
-    
-    "_focus": {
-        "border_color": Color.PRIMARY_BLUE.value,
-        "box_shadow": f"0 0 0 3px {Color.PRIMARY_BLUE.value}20",
-        "outline": "none",
-    },
-    
-    "_placeholder": {
-        "color": "var(--color-text-muted)",
-    },
 }

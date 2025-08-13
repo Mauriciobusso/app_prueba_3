@@ -3,6 +3,27 @@ Utilidades para Algolia - conversión de datos
 """
 from ..utils import Cot, Certs, Fam,  completar_con_ceros
 from typing import List, Dict
+from datetime import datetime
+
+def timestamp_to_date(timestamp) -> str:
+    """Convierte un timestamp a fecha en formato YYYY-MM-DD"""
+    if not timestamp:
+        return ''
+    
+    try:
+        # Si el timestamp es un string, convertirlo a int/float
+        if isinstance(timestamp, str):
+            timestamp = float(timestamp)
+        
+        # Si el timestamp está en milisegundos, convertir a segundos
+        if timestamp > 1e12:  # Timestamp en milisegundos
+            timestamp = timestamp / 1000
+            
+        # Convertir timestamp a datetime y formatear
+        dt = datetime.fromtimestamp(timestamp)
+        return dt.strftime('%d-%m-%Y')
+    except (ValueError, TypeError, OSError):
+        return str(timestamp) if timestamp else ''
 
 def cot_to_algolia(cot: Cot) -> Dict:
     """Convierte un objeto Cot a formato Algolia"""
@@ -46,6 +67,7 @@ def fam_to_algolia(fam: Fam) -> Dict:
 def algolia_to_cot(hit: Dict) -> Cot:
     """Convierte un resultado de Algolia a objeto Cot"""
     return Cot(
+        id=hit.get('object_id', ''),
         num=completar_con_ceros(hit.get('number', ''),4),
         year=completar_con_ceros(hit.get('year', ''),2),
         client=hit.get('razonsocial', ''),
@@ -55,13 +77,12 @@ def algolia_to_cot(hit: Dict) -> Cot:
         issuedate_timestamp=hit.get('issuedate_timestamp', 0),
         status=hit.get('estado', ''),
         area=hit.get('area', ''),
-        id=hit.get('objectID', ''),
         drive_file_id=hit.get('drive_file_id', ''),
-        drive_file_id_signed=hit.get('drive_file_id_signed', ''),
+        drive_file_id_name=hit.get('drive_file_id_name', ''),
         drive_aprobacion_id=hit.get('drive_aprobacion_id', ''),
         drive_aceptacion_id=hit.get('drive_aceptacion_id', ''),
-        enviada_fecha=hit.get('enviada_fecha', ''), 
-        facturada_fecha=hit.get('facturada_fecha', ''),
+        enviada_fecha=timestamp_to_date(hit.get('enviada_fecha', '')), 
+        facturada_fecha=timestamp_to_date(hit.get('facturada_fecha', '')),
         facturar=hit.get('facturar', ''),
         nombre=hit.get('nombre', ''),
         email=hit.get('email', ''),
@@ -74,10 +95,11 @@ def algolia_to_cot(hit: Dict) -> Cot:
 def algolia_to_certs(hit: Dict) -> Certs:
     """Convierte un resultado de Algolia a objeto Certs"""
     return Certs(
+        id=hit.get('object_id', ''),
         num=hit.get('num', ''),
         client=hit.get('client', ''),
         description=hit.get('description', ''),
-        issuedate=hit.get('issuedate', ''),
+        issuedate=timestamp_to_date(hit.get('issuedate', '')),  # Convertir timestamp si es necesario
         issuedate_timestamp=hit.get('issuedate_timestamp', 0),
         status=hit.get('status', ''),
         area=hit.get('area', '')
@@ -87,9 +109,10 @@ def algolia_to_certs(hit: Dict) -> Certs:
 def algolia_to_fam(hit: Dict) -> Fam:
     """Convierte un resultado de Algolia a objeto Fam"""
     return Fam(
+        id=hit.get('object_id', ''),
         family=hit.get('family', ''),
         razonsocial=hit.get('razonsocial', ''),
-        expirationdate=hit.get('expirationdate', ''),
+        expirationdate=timestamp_to_date(hit.get('expirationdate', '')),  # Convertir timestamp si es necesario
         description=hit.get('description', ''),
         area=hit.get('area', '')
     )
