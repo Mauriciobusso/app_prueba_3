@@ -4,6 +4,47 @@ from app_prueba_3.styles.colors import Color
 from app_prueba_3.backend.app_state import AppState
 from ..utils import format_date_reflex
 
+def loading_spinner(text: str = "Cargando..."):
+    """Componente spinner de carga reutilizable"""
+    return rx.hstack(
+        rx.spinner(
+            size="3",
+            color="blue",
+        ),
+        rx.text(text, size="2", color="gray"),
+        spacing="3",
+        align="center",
+        justify="center",
+        width="100%",
+        padding="4"
+    )
+
+def loading_overlay(text: str = "Cargando...", show: bool = True):
+    """Overlay de carga que cubre toda la pantalla"""
+    return rx.cond(
+        show,
+        rx.box(
+            rx.center(
+                rx.vstack(
+                    rx.spinner(size="3", color="blue"),
+                    rx.text(text, size="3", weight="medium"),
+                    spacing="4",
+                    align="center"
+                ),
+                width="100%",
+                height="100vh"
+            ),
+            position="fixed",
+            top="0",
+            left="0",
+            width="100vw",
+            height="100vh",
+            background_color="rgba(255, 255, 255, 0.9)",
+            z_index="1000"
+        ),
+        rx.fragment()
+    )
+
 def session_keepalive():
     """Componente invisible que mantiene la sesión activa"""
     return rx.fragment(

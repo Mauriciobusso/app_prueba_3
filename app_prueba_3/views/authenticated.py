@@ -1,6 +1,6 @@
 import reflex as rx
 from ..views.navbar import navbar
-from ..components.components import table_certificados, table_familias, table_cotizaciones, session_keepalive
+from ..components.components import table_certificados, table_familias, table_cotizaciones, session_keepalive, loading_spinner, loading_overlay
 from ..backend.app_state import AppState
 from ..styles.colors import Color
 from ..styles.style import container_style
@@ -10,12 +10,33 @@ from ..utils import Cot
 def certificados_view() -> rx.Component:
     """Vista de certificados - Estilo Bureau Veritas"""
     return rx.box(
+        # Overlay de carga para inicialización del usuario
+        loading_overlay(
+            rx.cond(
+                AppState.is_loading_user_initialization,
+                "Inicializando usuario...",
+                rx.cond(
+                    AppState.is_loading_areas,
+                    "Cargando áreas...",
+                    rx.cond(
+                        AppState.is_loading_roles,
+                        "Cargando roles...",
+                        rx.cond(
+                            AppState.is_loading_data,
+                            "Cargando certificados...",
+                            "Cargando..."
+                        )
+                    )
+                )
+            ),
+            AppState.is_loading_user_initialization | AppState.is_loading_areas | AppState.is_loading_roles | AppState.is_loading_data
+        ),
         session_keepalive(),  # Mantener sesión activa
         navbar(title="Certificados"),
         rx.box(
             rx.vstack(
                 rx.cond(
-                    (AppState.certs.length() == 0) & (AppState.values["search_value"] == ""),
+                    (AppState.certs.length() == 0) & (AppState.values["search_value"] == "") & ~AppState.is_loading_data,
                     rx.center(
                         rx.spinner(
                             size="3", 
@@ -43,11 +64,33 @@ def certificados_view() -> rx.Component:
 def familias_view() -> rx.Component:
     """Vista de familias - Estilo Bureau Veritas"""
     return rx.box(
+        # Overlay de carga para inicialización del usuario
+        loading_overlay(
+            rx.cond(
+                AppState.is_loading_user_initialization,
+                "Inicializando usuario...",
+                rx.cond(
+                    AppState.is_loading_areas,
+                    "Cargando áreas...",
+                    rx.cond(
+                        AppState.is_loading_roles,
+                        "Cargando roles...",
+                        rx.cond(
+                            AppState.is_loading_data,
+                            "Cargando familias...",
+                            "Cargando..."
+                        )
+                    )
+                )
+            ),
+            AppState.is_loading_user_initialization | AppState.is_loading_areas | AppState.is_loading_roles | AppState.is_loading_data
+        ),
+        session_keepalive(),  # Mantener sesión activa
         navbar(title="Familias"),
         rx.box(
             rx.vstack(
                 rx.cond(
-                    (AppState.fams.length() == 0) & (AppState.values["search_value"] == ""),
+                    (AppState.fams.length() == 0) & (AppState.values["search_value"] == "") & ~AppState.is_loading_data,
                     rx.center(
                         rx.spinner(
                             size="3", 
@@ -75,11 +118,33 @@ def familias_view() -> rx.Component:
 def cotizaciones_view() -> rx.Component:
     """Vista de cotizaciones - Estilo Bureau Veritas"""
     return rx.box(
+        # Overlay de carga para inicialización del usuario
+        loading_overlay(
+            rx.cond(
+                AppState.is_loading_user_initialization,
+                "Inicializando usuario...",
+                rx.cond(
+                    AppState.is_loading_areas,
+                    "Cargando áreas...",
+                    rx.cond(
+                        AppState.is_loading_roles,
+                        "Cargando roles...",
+                        rx.cond(
+                            AppState.is_loading_data,
+                            "Cargando cotizaciones...",
+                            "Cargando..."
+                        )
+                    )
+                )
+            ),
+            AppState.is_loading_user_initialization | AppState.is_loading_areas | AppState.is_loading_roles | AppState.is_loading_data
+        ),
+        session_keepalive(),  # Mantener sesión activa
         navbar(title="Cotizaciones"),
         rx.box(
             rx.vstack(
                 rx.cond(
-                    (AppState.cots.length() == 0) & (AppState.values["search_value"] == ""),
+                    (AppState.cots.length() == 0) & (AppState.values["search_value"] == "") & ~AppState.is_loading_data,
                     rx.center(
                         rx.spinner(
                             size="3", 
@@ -176,80 +241,9 @@ def cotizacion_detalle_view() -> rx.Component:
                                     spacing="1"
                                 ),
                                 
-                                # Fecha de Envío
-                                rx.vstack(
-                                    rx.text("Fecha de Envío:", weight="bold", style={"color": "var(--accent-11)"}),
-                                    rx.cond(
-                                        AppState.cotizacion_detalle.enviada_fecha != "",
-                                        rx.text(AppState.cotizacion_detalle.enviada_fecha),
-                                        rx.text("No enviada")
-                                    ),
-                                    align="start",
-                                    spacing="1"
-                                ),
-                                
-                                # Fecha de Paso a Facturar
-                                rx.vstack(
-                                    rx.text("Fecha de Paso a Facturar:", weight="bold", style={"color": "var(--accent-11)"}),
-                                    rx.cond(
-                                        AppState.cotizacion_detalle.facturada_fecha != "",
-                                        rx.text(AppState.cotizacion_detalle.facturada_fecha),
-                                        rx.text("No facturada")
-                                    ),
-                                    align="start",
-                                    spacing="1"
-                                ),
-                                
-                                # Nombre
-                                rx.vstack(
-                                    rx.text("Nombre:", weight="bold", style={"color": "var(--accent-11)"}),
-                                    rx.cond(
-                                        AppState.cotizacion_detalle.nombre != "",
-                                        rx.text(AppState.cotizacion_detalle.nombre),
-                                        rx.text("No especificado")
-                                    ),
-                                    align="start",
-                                    spacing="1"
-                                ),
-                                
-                                # Email
-                                rx.vstack(
-                                    rx.text("Email:", weight="bold", style={"color": "var(--accent-11)"}),
-                                    rx.cond(
-                                        AppState.cotizacion_detalle.email != "",
-                                        rx.text(AppState.cotizacion_detalle.email),
-                                        rx.text("No especificado")
-                                    ),
-                                    align="start",
-                                    spacing="1"
-                                ),
-                                
                                 columns="2",
                                 spacing="4",
                                 width="100%"
-                            ),
-                            
-                            # Sección de familias
-                            rx.vstack(
-                                rx.text("Familias:", weight="bold", style={"color": "var(--accent-11)", "margin_top": "20px"}),
-                                rx.cond(
-                                    AppState.cotizacion_detalle.familys.length() > 0,
-                                    rx.vstack(
-                                        rx.foreach(
-                                            AppState.cotizacion_detalle.familys,
-                                            lambda fam: rx.box(
-                                                rx.text(f"• {fam.family} - {fam.product}", style={"margin": "5px 0"}),
-                                                width="100%"
-                                            )
-                                        ),
-                                        align="start",
-                                        width="100%"
-                                    ),
-                                    rx.text("No hay familias asociadas", style={"font_style": "italic", "color": "gray"})
-                                ),
-                                align="start",
-                                width="100%",
-                                spacing="2"
                             ),
                             
                             # Enlaces de acción
@@ -275,25 +269,6 @@ def cotizacion_detalle_view() -> rx.Component:
                                     ),
                                     rx.box()  # Elemento vacío si no hay drive_file_id
                                 ),
-                                
-                                rx.link(
-                                    rx.button(
-                                        rx.icon("external-link", size=18),
-                                        "Abrir en Panel",
-                                        variant="outline",
-                                        size="3",
-                                        style={
-                                            "border": f"1px solid {Color.SECONDARY_BLUE.value}",
-                                            "color": Color.SECONDARY_BLUE.value,
-                                            "_hover": {
-                                                "background_color": Color.LIGHT_GREY.value,
-                                            }
-                                        }
-                                    ),
-                                    href=f"https://panel.bvarg.com.ar/app/cotizaciones/{AppState.cotizacion_detalle.id}",
-                                    is_external=True
-                                ),
-                                
                                 spacing="3",
                                 justify="start",
                                 style={"margin_top": "30px"}
@@ -323,15 +298,37 @@ def cotizacion_detalle_view() -> rx.Component:
                     )
                 ),
                 
+                # Bloque PDF extraído
+                rx.cond(
+                    (AppState.cotizacion_detalle.drive_file_id != "") & (AppState.cotizacion_detalle.id != ""),
+                    rx.box(
+                        rx.heading("Datos extraídos del PDF", size="5", style={"margin_top": "32px", "color": Color.SECONDARY_BLUE.value}),
+                        rx.cond(
+                            AppState.cotizacion_detalle_pdf_error != "",
+                            rx.text(f"Error al extraer PDF: {AppState.cotizacion_detalle_pdf_error}", color="red"),
+                            rx.vstack(
+                                rx.text("Metadata:", weight="bold", style={"margin_top": "10px", "color": "var(--accent-11)"}),
+                                rx.code(AppState.cotizacion_detalle_pdf_metadata, language="json", width="100%", style={"font_size": "0.85rem", "background": Color.LIGHT_GREY.value}),
+                                rx.text("Tablas:", weight="bold", style={"margin_top": "10px", "color": "var(--accent-11)"}),
+                                rx.code(AppState.cotizacion_detalle_pdf_tablas, language="json", width="100%", style={"font_size": "0.85rem", "background": Color.LIGHT_GREY.value}),
+                                rx.text("Condiciones:", weight="bold", style={"margin_top": "10px", "color": "var(--accent-11)"}),
+                                rx.code(AppState.cotizacion_detalle_pdf_condiciones, language="text", width="100%", style={"font_size": "0.85rem", "background": Color.LIGHT_GREY.value})
+                            )
+                        ),
+                        style={"background": Color.GRAY_50.value, "border_radius": "8px", "padding": "20px", "margin_top": "20px", "max_width": "800px", "width": "100%"}
+                    ),
+                    rx.fragment()
+                ),
+                
                 spacing="6",
                 width="100%",
                 align="center"
             ),
             style=container_style,
-            padding_top="84px",
+            padding_top="84px"
         ),
         overflow_y="auto",
         width="100%",
         height="100vh",
-        background_color="var(--color-background)",
-    )
+        background_color="var(--color-background)"
+    )                  

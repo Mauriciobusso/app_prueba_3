@@ -164,7 +164,7 @@ def extract_cotizacion_metadata_from_pdf(pdf_bytes: bytes) -> dict:
         # Dirigido a (busca "A Atte. Sr./Sra.:" o variantes)
         m = re.search(r'A\s*Atte\.?\s*Sr\.?\s*/?\s*Sra\.?\s*[:\-]?\s*(.+)', full_text, re.IGNORECASE)
         if not m:
-            m = re.search(r'(?:Dirigido a|Sr\.?/Sra\.?|Sra\.?|Sr\.?|Atenci[oó]n)\s*[:\-]?\s*(.+)', full_text)
+            m = re.search(r'(?:Dirigido a|Sr\.?/Sra\.?|Sra\.?|Sres\.?|Sr\.?|Atenci[oó]n)\s*[:\-]?\s*(.+)', full_text)
         if m:
             result['dirigido_a'] = m.group(1).split('\n')[0].strip()
         # Consultora (si existe)

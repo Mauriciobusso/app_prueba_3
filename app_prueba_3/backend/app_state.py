@@ -21,6 +21,29 @@ firestore_queue = asyncio.Queue()
 
 
 class AppState(rx.State):
+    # Datos extraídos del PDF de la cotización seleccionada
+    cotizacion_detalle_pdf_metadata: str = ""
+    cotizacion_detalle_pdf_tablas: str = ""
+    cotizacion_detalle_pdf_condiciones: str = ""
+    cotizacion_detalle_pdf_error: str = ""
+    @rx.event
+    async def extraer_pdf_cotizacion_detalle(self):
+        """Extrae los datos del PDF de la cotización seleccionada y los guarda en el estado como string."""
+        from app_prueba_3.api.cotizacion_extractor import get_cotizacion_full_data_from_drive
+        import json
+        self.cotizacion_detalle_pdf_metadata = ""
+        self.cotizacion_detalle_pdf_tablas = ""
+        self.cotizacion_detalle_pdf_condiciones = ""
+        self.cotizacion_detalle_pdf_error = ""
+        file_id = self.cotizacion_detalle.drive_file_id
+        if file_id:
+            try:
+                data = get_cotizacion_full_data_from_drive(file_id)
+                self.cotizacion_detalle_pdf_metadata = json.dumps(data.get("metadata", {}), ensure_ascii=False, indent=2)
+                self.cotizacion_detalle_pdf_tablas = json.dumps(data.get("tablas", []), ensure_ascii=False, indent=2)
+                self.cotizacion_detalle_pdf_condiciones = str(data.get("condiciones", ""))
+            except Exception as e:
+                self.cotizacion_detalle_pdf_error = str(e)
     id_token: str = rx.LocalStorage()
     user_email: str = rx.LocalStorage()     # Nuevo: persistir email del usuario
     session_valid: bool = False             # Nuevo: estado de sesión (no persistente por limitación de Reflex)
@@ -34,6 +57,17 @@ class AppState(rx.State):
     date: str = ""
     current_page: str = ""                 # Nuevo: para rastrear la página actual
 
+    # Estados de carga para mostrar spinners
+    is_loading_user_initialization: bool = False
+    is_loading_areas: bool = False
+    is_loading_roles: bool = False
+    is_loading_data: bool = False
+    
+    # Flags para evitar re-inicializaciones innecesarias
+    user_initialized: bool = False
+    areas_loaded: bool = False
+    roles_loaded: bool = False
+
     certs: list[Certs] = []         # Lista para almacenar los certificados
     certs_show: list[Certs] = []    # Lista para mostrar los certificados
 
@@ -45,6 +79,12 @@ class AppState(rx.State):
     
     # Cotización de detalle para la vista individual
     cotizacion_detalle: Cot = Cot()
+    
+    # Datos extraídos del PDF de la cotización seleccionada
+    cotizacion_detalle_pdf_metadata: str = ""
+    cotizacion_detalle_pdf_tablas: str = ""
+    cotizacion_detalle_pdf_condiciones: str = ""
+    cotizacion_detalle_pdf_error: str = ""
 
     # Campo de texto de búsqueda temporal (no ejecuta búsqueda automáticamente)
     search_text: str = ""
@@ -111,18 +151,36 @@ class AppState(rx.State):
     @rx.event
     async def set_current_page(self, page: str):
         """Establece la página actual para cargar los datos apropiados."""
+        # Verificar si los datos específicos ya están cargados
+        data_already_loaded = False
+        if page == "certificaciones" and len(self.certs) > 0:
+            data_already_loaded = True
+        elif page == "familias" and len(self.fams) > 0:
+            data_already_loaded = True
+        elif page == "cotizaciones" and len(self.cots) > 0:
+            data_already_loaded = True
+            
+        # Si ya estamos en la misma página y los datos ya están cargados, no hacer nada
+        if self.current_page == page and data_already_loaded:
+            print(f"📄 Ya en la página {page} con datos cargados, omitiendo recarga")
+            return
+            
         self.current_page = page
         print(f"📄 Página establecida: {page}")
         
         # Cargar datos según la página
         if self.is_authenticated:
             print(f"🔐 Usuario autenticado, cargando datos para: {page}")
-            if page == "certificaciones":
-                yield AppState.get_certs()
-            elif page == "familias":
-                yield AppState.get_fams()
-            elif page == "cotizaciones":
-                yield AppState.get_cots()
+            self.is_loading_data = True
+            try:
+                if page == "certificaciones":
+                    yield AppState.get_certs()
+                elif page == "familias":
+                    yield AppState.get_fams()
+                elif page == "cotizaciones":
+                    yield AppState.get_cots()
+            finally:
+                self.is_loading_data = False
         else:
             print("❌ Usuario no autenticado, no se pueden cargar datos")
     
@@ -148,6 +206,13 @@ class AppState(rx.State):
     async def on_mount(self):
         """Inicialización al cargar la página protegida."""
         print("🔄 Inicializando página...")
+        
+        # Si el usuario ya está inicializado y autenticado, evitar re-inicialización
+        if self.user_initialized and self.is_authenticated:
+            print("✅ Usuario ya inicializado, omitiendo re-inicialización")
+            # Solo iniciar la tarea para procesar la cola de Firestore si no está ya iniciada
+            yield AppState.process_firestore_changes()
+            return
         
         # Verificar si hay un email persistente (sesión anterior)
         if self.user_email and not self.id_token:
@@ -263,6 +328,27 @@ class AppState(rx.State):
         self.id_token = ""
         self.set_session_internal(False)  # Limpiar sesión interna
         self.set_last_activity(0.0)
+        
+        # Resetear flags de inicialización
+        self.user_initialized = False
+        self.areas_loaded = False
+        self.roles_loaded = False
+        self.is_loading_user_initialization = False
+        self.is_loading_areas = False
+        self.is_loading_roles = False
+        self.is_loading_data = False
+        
+        # Limpiar datos de listas para permitir recarga
+        self.certs = []
+        self.certs_show = []
+        self.fams = []
+        self.fams_show = []
+        self.cots = []
+        self.cots_show = []
+        
+        # Resetear página actual para forzar recarga
+        self.current_page = ""
+        
         # Mantener el email para mostrar al usuario que se puede reconectar
         # self.user_email = ""  # No limpiar para mostrar último usuario
         self.user_data = User()
@@ -322,6 +408,12 @@ class AppState(rx.State):
             print("No se pudo autenticar.")
             return
 
+        # Si el usuario ya está inicializado, evitar re-inicialización
+        if self.user_initialized and self.user_data.email:
+            print(f"✅ Usuario ya inicializado: {self.user_data.email}, omitiendo re-inicialización")
+            return
+
+        self.is_loading_user_initialization = True
         try:
             token = json.loads(self.id_token)
             user_info = verify_oauth2_token(
@@ -343,16 +435,30 @@ class AppState(rx.State):
                 user_data = firestore_api.get_user(email)
                 self.user_data.data = user_data
                 
-                # Cargar roles en paralelo
-                print("👥 Cargando roles...")
-                self.roles = firestore_api.get_roles()
+                # Cargar roles solo si no están ya cargados
+                if not self.roles_loaded:
+                    self.is_loading_roles = True
+                    print("👥 Cargando roles...")
+                    self.roles = firestore_api.get_roles()
+                    self.roles_loaded = True
+                    print("Roles ya obtenidos." if self.roles else "✅ Roles cargados.")
+                else:
+                    print("Roles ya obtenidos.")
+                    
                 self.user_data.roles_names = sorted([role['name'] for role in self.roles if role['id'] in user_data.get('roles', [])])
                 self.user_data.current_rol = user_data.get("currentRole", "")
                 self.user_data.current_rol_name = firestore_api.get_rol_name(self.user_data.current_rol)
+                self.is_loading_roles = False
                 
-                # Cargar áreas de forma optimizada
-                print("🌍 Cargando áreas...")
-                self.areas = firestore_api.get_areas()
+                # Cargar áreas solo si no están ya cargadas
+                if not self.areas_loaded:
+                    self.is_loading_areas = True
+                    print("🌍 Cargando áreas...")
+                    self.areas = firestore_api.get_areas()
+                    self.areas_loaded = True
+                    print(f"✅ Áreas cargadas: {len(self.areas)} áreas disponibles" if self.areas else "⚠️ No se cargaron áreas")
+                else:
+                    print("Areas ya obtenidas.")
                 
                 # Procesar áreas inmediatamente después de obtenerlas
                 user_area_ids = user_data.get('areas', [])
@@ -362,13 +468,15 @@ class AppState(rx.State):
                     self.user_data.current_area = user_data.get("currentArea", "")
                     self.user_data.current_area_name = firestore_api.get_area_name(self.user_data.current_area) if self.user_data.current_area else "TODAS"
                     
-                    print(f"✅ Áreas cargadas: {len(area_names)} áreas disponibles")
+                    print(f"✅ Áreas del usuario procesadas: {len(area_names)} áreas disponibles")
                 else:
                     # Usuario sin áreas asignadas
                     self.user_data.areas_names = []
                     self.user_data.current_area = ""
                     self.user_data.current_area_name = ""
                     print("⚠️  Usuario sin áreas asignadas")
+                
+                self.is_loading_areas = False
                 
                 # Verificar que el usuario tenga áreas asignadas
                 if not self.user_data.areas_names:
@@ -382,18 +490,23 @@ class AppState(rx.State):
                 async def firestore_callback(data):
                     try:
                         await firestore_queue.put(data)
+                        print("Cambios detectados en Firestore.")
                     except Exception as e:
                         print(f"Error al colocar datos en la cola: {e}")
 
                 firestore_api.setup_listener(email, firestore_callback)
+                print("Listener configurado.")
             else:
                 print("✅ Listener ya configurado.")
-                
+            
+            # Marcar usuario como inicializado
+            self.user_initialized = True
             print(f"✅ Usuario inicializado correctamente: {email}")
-                
+            
         except Exception as e:
             print(f"❌ Error al inicializar usuario: {e}")
-            await self.clear_session()
+        finally:
+            self.is_loading_user_initialization = False
 
     @rx.event
     async def update_activity(self):
@@ -522,6 +635,31 @@ class AppState(rx.State):
         return None  # Retorna None si no se encuentra el título
     
     @rx.event
+    async def extraer_pdf_cotizacion_detalle(self):
+        """Extrae los datos del PDF de la cotización seleccionada y los guarda en el estado como string."""
+        from ..api.cotizacion_extractor import get_cotizacion_full_data_from_drive
+        import json
+        
+        # Limpiar datos anteriores
+        self.cotizacion_detalle_pdf_metadata = ""
+        self.cotizacion_detalle_pdf_tablas = ""
+        self.cotizacion_detalle_pdf_condiciones = ""
+        self.cotizacion_detalle_pdf_error = ""
+        
+        file_id = self.cotizacion_detalle.drive_file_id
+        if file_id:
+            try:
+                print(f"🔍 Extrayendo datos del PDF: {file_id}")
+                data = get_cotizacion_full_data_from_drive(file_id)
+                self.cotizacion_detalle_pdf_metadata = json.dumps(data.get("metadata", {}), ensure_ascii=False, indent=2)
+                self.cotizacion_detalle_pdf_tablas = json.dumps(data.get("tablas", []), ensure_ascii=False, indent=2)
+                self.cotizacion_detalle_pdf_condiciones = str(data.get("condiciones", ""))
+                print(f"✅ PDF extraído exitosamente")
+            except Exception as e:
+                print(f"❌ Error al extraer PDF: {e}")
+                self.cotizacion_detalle_pdf_error = str(e)
+    
+    @rx.event
     async def cargar_cotizacion_detalle(self):
         """Carga los detalles de una cotización específica usando el parámetro de ruta."""
         try:
@@ -573,6 +711,8 @@ class AppState(rx.State):
             
             self.cotizacion_detalle = cotizacion_encontrada
             print(f"✅ Cotización detalle cargada: {cotizacion_encontrada.num}-{cotizacion_encontrada.year} (ID: {cot_id})")
+            # Extraer PDF si hay archivo asociado
+            await self.extraer_pdf_cotizacion_detalle()
             
         except Exception as e:
             print(f"❌ Error al cargar cotización detalle: {e}")
