@@ -18,6 +18,18 @@ class Model(rx.Base):
     model: str = ""
     specs: dict = {}
 
+class Client(rx.Base):
+    """Values for Clients"""
+    id: str = ""
+    razonsocial: str = ""
+    cuit: str = ""
+    direccion: str = ""
+    phone: str = ""
+    email_cotizacion: str = ""
+    active_fams: int = 0
+    condiciones: str = ""
+    consultora: str = ""
+
 class Fam(rx.Base):
     """Values for Fams"""
     id: str = ""
@@ -45,6 +57,8 @@ class Cot(rx.Base):
     area: str = ""
     familys_ids: list[str] = []
     familys: list[Fam] = []
+    familys_codigos: list[str] = []
+    familys_productos: list[str] = []
     issuedate: str = ""
     issuedate_timestamp: float = 0.0  # Timestamp para ordenamiento eficiente
     status: str = ""    
@@ -57,11 +71,18 @@ class Cot(rx.Base):
     facturada_fecha: str = ""
     facturar: str = ""
     nombre: str = ""
+    consultora: str = ""
     email: str = ""
     ot: str = ""
     rev: str = ""
     resolucion: str = ""
     cuenta: str = ""
+    # Datos extraídos del PDF (persistidos en la COT para revisión/uso posterior)
+    pdf_metadata: dict = {}
+    pdf_tablas: list = []
+    pdf_condiciones: str = ""
+    pdf_familias: list[dict] = []
+    pdf_familias_validacion: dict = {}
 
 class Certs(rx.Base):
     """Values for Certs"""

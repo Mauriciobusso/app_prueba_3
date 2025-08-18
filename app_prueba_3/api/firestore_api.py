@@ -6,7 +6,7 @@ from firebase_admin import credentials, firestore
 from google.cloud.firestore_v1 import FieldFilter
 import asyncio
 from threading import Thread, Lock
-from ..utils import User, Fam, Cot, Certs, Model, completar_con_ceros
+from ..utils import User, Fam, Cot, Certs, Model, Client, completar_con_ceros
 
 class FirestoreAPI:
     def __init__(self):
@@ -556,6 +556,139 @@ class FirestoreAPI:
         except Exception as e:
             print(f"Error al obtener nombre del area: {e}")
             return "" 
+
+    def get_clients(
+        self,
+        area: str = None,
+        order_by: str = "razonsocial",
+        limit: int = 100,
+        filter: Union[str, list] = ""
+    ) -> list[Client]:
+        """
+        Obtiene los clientes desde Firestore.
+
+        Args:
+            area (str): Filtrar por área específica. Si es None, obtiene de todas las áreas.
+            order_by (str): Campo por el cual ordenar (por defecto: razonsocial).
+            limit (int): Número máximo de resultados.
+            filter: Filtros adicionales. Puede ser una lista de tuplas o cadena vacía.
+
+        Returns:
+            list[Client]: Lista de clientes.
+        """
+        if not self.firebase_initialized:
+            print("⚠️  Firebase no inicializado. Retornando lista vacía.")
+            return []
+
+        try:
+            clients_ref = self.db.collection('clientes')
+            query = clients_ref
+            
+            # Aplicar filtro por área si se especifica
+            if area:
+                query = query.where(filter=FieldFilter("area", "==", area))
+
+            # Aplicar filtros adicionales
+            if isinstance(filter, list) and filter:
+                for field, op, value in filter:
+                    print(f"Aplicando filtro cliente: {field} {op} {value}")
+                    query = query.where(filter=FieldFilter(field, op, value))
+
+            # Ordenar
+            if order_by:
+                query = query.order_by(order_by, direction=firestore.Query.ASCENDING)
+
+            # Limitar resultados
+            if limit > 0:
+                query = query.limit(limit)
+
+            docs = query.stream()
+            clients = []
+            
+            for doc in docs:
+                data = doc.to_dict()
+                client = Client(
+                    id=doc.id,
+                    razonsocial=data.get('razonsocial', ''),
+                    cuit=data.get('cuit', ''),
+                    direccion=data.get('direccion', ''),
+                    phone=data.get('phone', ''),
+                    email_cotizacion=data.get('email_cotizacion', ''),
+                    active_fams=data.get('active_fams', 0),
+                    condiciones=data.get('condiciones', ''),
+                    consultora=data.get('consultora', ''),
+                )
+                clients.append(client)
+
+            print(f"✅ {len(clients)} clientes obtenidos correctamente" + (f" para área: {area}" if area else ""))
+            return clients
+
+        except Exception as e:
+            print(f"❌ Error al obtener clientes: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    def search_clients_by_similarity(
+        self,
+        razonsocial: str,
+        area: str = None,
+        similarity_threshold: float = 0.6
+    ) -> list[Client]:
+        """
+        Busca clientes por similitud de razón social.
+        
+        Args:
+            razonsocial (str): Razón social a buscar.
+            area (str): Filtrar por área específica.
+            similarity_threshold (float): Umbral de similitud (0.0-1.0).
+        
+        Returns:
+            list[Client]: Lista de clientes similares ordenados por similitud.
+        """
+        if not razonsocial:
+            return []
+        
+        try:
+            # Obtener todos los clientes
+            all_clients = self.get_clients(area=area, limit=0)  # Sin límite para búsqueda
+            
+            import difflib
+            razonsocial_clean = razonsocial.upper().strip()
+            similar_clients = []
+            
+            for client in all_clients:
+                client_name_clean = (client.razonsocial or "").upper().strip()
+                
+                if not client_name_clean:
+                    continue
+                
+                # Calcular similitud usando SequenceMatcher
+                similarity = difflib.SequenceMatcher(None, razonsocial_clean, client_name_clean).ratio()
+                
+                # También buscar palabras clave
+                razonsocial_words = set(razonsocial_clean.split())
+                client_words = set(client_name_clean.split())
+                word_overlap = len(razonsocial_words.intersection(client_words))
+                word_similarity = word_overlap / max(len(razonsocial_words), len(client_words)) if razonsocial_words or client_words else 0
+                
+                # Combinar similitudes
+                final_similarity = max(similarity, word_similarity)
+                
+                if final_similarity >= similarity_threshold:
+                    similar_clients.append((client, final_similarity))
+            
+            # Ordenar por similitud (más similar primero)
+            similar_clients.sort(key=lambda x: x[1], reverse=True)
+            
+            result = [client for client, similarity in similar_clients]
+            print(f"🔍 Encontrados {len(result)} clientes similares a '{razonsocial}'")
+            
+            return result
+            
+        except Exception as e:
+            print(f"❌ Error en búsqueda por similitud: {e}")
+            return [] 
     
     def update_current_user(self, email, campo: str, value: str):
         """Actualiza el rol actual del usuario en Firestore"""

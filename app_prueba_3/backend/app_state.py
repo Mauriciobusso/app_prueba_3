@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from ..api.firestore_api import firestore_api
 from ..api.algolia_api import algolia_api
 from ..api.algolia_utils import algolia_to_cot, algolia_to_certs, algolia_to_fam
-from ..utils import User, Fam, Certs, Cot, buscar_fams, buscar_cots
+from ..utils import User, Fam, Certs, Cot, Client, buscar_fams, buscar_cots
 from datetime import datetime
 import time
 import asyncio
@@ -26,15 +26,19 @@ class AppState(rx.State):
     cotizacion_detalle_pdf_tablas: str = ""
     cotizacion_detalle_pdf_condiciones: str = ""
     cotizacion_detalle_pdf_error: str = ""
+    cotizacion_detalle_pdf_familias: str = ""
+    cotizacion_detalle_pdf_familias_validacion: str = ""
     @rx.event
     async def extraer_pdf_cotizacion_detalle(self):
         """Extrae los datos del PDF de la cotización seleccionada y los guarda en el estado como string."""
         from app_prueba_3.api.cotizacion_extractor import get_cotizacion_full_data_from_drive
-        import json
+        import json, re
         self.cotizacion_detalle_pdf_metadata = ""
         self.cotizacion_detalle_pdf_tablas = ""
         self.cotizacion_detalle_pdf_condiciones = ""
         self.cotizacion_detalle_pdf_error = ""
+        self.cotizacion_detalle_pdf_familias = ""
+        self.cotizacion_detalle_pdf_familias_validacion = ""
         file_id = self.cotizacion_detalle.drive_file_id
         if file_id:
             try:
@@ -42,6 +46,196 @@ class AppState(rx.State):
                 self.cotizacion_detalle_pdf_metadata = json.dumps(data.get("metadata", {}), ensure_ascii=False, indent=2)
                 self.cotizacion_detalle_pdf_tablas = json.dumps(data.get("tablas", []), ensure_ascii=False, indent=2)
                 self.cotizacion_detalle_pdf_condiciones = str(data.get("condiciones", ""))
+                self.cotizacion_detalle_pdf_familias = json.dumps(data.get("familias", []), ensure_ascii=False, indent=2)
+                self.cotizacion_detalle_pdf_familias_validacion = json.dumps(data.get("familias_validacion", {}), ensure_ascii=False, indent=2)
+                # Mapear metadata y familias al objeto Cot en memoria
+                meta = data.get("metadata", {}) or {}
+                numero_cot = str(meta.get("numero_cotizacion", ""))
+                digits = re.findall(r"\d+", numero_cot)
+                if digits:
+                    joined = "".join(digits)
+                    self.cotizacion_detalle.num = (joined[:4] if len(joined) >= 4 else joined).zfill(4)
+                    self.cotizacion_detalle.year = joined[-2:] if len(joined) >= 2 else self.cotizacion_detalle.year
+                # client y otros campos directos
+                client_name = (meta.get("empresa") or "").strip()
+                if client_name:
+                    self.cotizacion_detalle.client = client_name
+                if meta.get("fecha"):
+                    self.cotizacion_detalle.issuedate = meta.get("fecha")
+                if meta.get("dirigido_a"):
+                    self.cotizacion_detalle.nombre = meta.get("dirigido_a").strip()
+                if meta.get("consultora"):
+                    self.cotizacion_detalle.consultora = meta.get("consultora").strip()
+                if meta.get("mail_receptor"):
+                    self.cotizacion_detalle.email = meta.get("mail_receptor").strip()
+                if meta.get("revision"):
+                    self.cotizacion_detalle.rev = str(meta.get("revision")).strip()
+
+                # 1. BUSCAR CLIENTE EN FIRESTORE O CREAR DESDE COTIZACIÓN
+                try:
+                    area_filter = self.user_data.current_area if self.user_data.current_area else None
+                    print(f"🔍 DEBUG: Buscando cliente '{client_name}' en área: {area_filter}")
+                    
+                    client_found = None
+                    
+                    # Primero buscar con filtro exacto en el área
+                    if client_name:
+                        clients_exact = firestore_api.get_clients(
+                            area=area_filter,
+                            filter=[("razonsocial", "==", client_name)]
+                        )
+                        if clients_exact:
+                            client_found = clients_exact[0]
+                            print(f"✅ DEBUG: Cliente encontrado exacto en área: {client_found.razonsocial}")
+                    
+                    # Si no se encuentra exacto, buscar sin filtro de área
+                    if not client_found and client_name:
+                        clients_exact_no_area = firestore_api.get_clients(
+                            area=None,
+                            filter=[("razonsocial", "==", client_name)]
+                        )
+                        if clients_exact_no_area:
+                            client_found = clients_exact_no_area[0]
+                            print(f"✅ DEBUG: Cliente encontrado exacto sin área: {client_found.razonsocial}")
+                    
+                    # Si aún no se encuentra, buscar por similitud
+                    if not client_found and client_name:
+                        clients_similar = firestore_api.search_clients_by_similarity(
+                            razonsocial=client_name,
+                            area=area_filter,
+                            similarity_threshold=0.7
+                        )
+                        if clients_similar:
+                            client_found = clients_similar[0]
+                            print(f"✅ DEBUG: Cliente encontrado por similitud: {client_found.razonsocial}")
+                    
+                    # Si se encuentra cliente, usar sus datos
+                    if client_found:
+                        self.cotizacion_detalle_client = client_found
+                        self.cotizacion_detalle.client_id = client_found.id
+                        # Actualizar datos de cotización con datos del cliente
+                        self.cotizacion_detalle.client = client_found.razonsocial
+                        if client_found.consultora and not self.cotizacion_detalle.consultora:
+                            self.cotizacion_detalle.consultora = client_found.consultora
+                        print(f"✅ DEBUG: Cliente configurado: {client_found.razonsocial} (ID: {client_found.id})")
+                    else:
+                        # Si no se encuentra, crear cliente temporal con datos de la cotización
+                        print(f"⚠️  DEBUG: Cliente no encontrado, creando temporal para '{client_name}'")
+                        self.cotizacion_detalle_client = Client(
+                            id="",  # Sin ID porque no está en Firestore
+                            razonsocial=client_name,
+                            consultora=meta.get("consultora", ""),
+                            email_cotizacion=meta.get("mail_receptor", ""),
+                        )
+                        print(f"✅ DEBUG: Cliente temporal creado: {client_name}")
+                
+                except Exception as e_client:
+                    print(f"⚠️  Error al buscar cliente: {e_client}")
+                    import traceback
+                    traceback.print_exc()
+
+                # 2. BUSCAR Y MAPEAR FAMILIAS
+                try:
+                    familias_pdf = data.get("familias", []) or []
+                    print(f"🔍 DEBUG: Familias extraídas del PDF: {len(familias_pdf)} encontradas")
+                    print(f"🔍 DEBUG: Primeras 3 familias: {familias_pdf[:3] if familias_pdf else 'Ninguna'}")
+                    
+                    # Guardar códigos/productos extraídos
+                    self.cotizacion_detalle.familys_codigos = [
+                        (itm.get("code") or "").strip().upper() for itm in familias_pdf
+                    ]
+                    self.cotizacion_detalle.familys_productos = [
+                        (itm.get("description") or "").strip() for itm in familias_pdf
+                    ]
+                    
+                    print(f"🔍 DEBUG: Códigos extraídos: {self.cotizacion_detalle.familys_codigos}")
+                    print(f"🔍 DEBUG: Productos extraídos: {self.cotizacion_detalle.familys_productos}")
+
+                    # Si se encontró cliente, obtener sus familias para mapear
+                    fams_cliente = []
+                    if client_found:
+                        try:
+                            fams_cliente = firestore_api.get_fams(
+                                area=area_filter,
+                                order_by="razonsocial",
+                                limit=500,
+                                filter=[("client_id", "==", client_found.id)]
+                            )
+                            print(f"🔍 DEBUG: Familias del cliente encontradas: {len(fams_cliente)}")
+                        except Exception as e_fam:
+                            print(f"⚠️  Error al obtener familias del cliente: {e_fam}")
+                    
+                    # Mapear familias del PDF con familias del cliente
+                    matched_fams, matched_ids = [], []
+                    
+                    if fams_cliente:
+                        # Indexar familias por código y producto
+                        fams_by_code = {}
+                        fams_by_product = []
+                        
+                        for fam in fams_cliente:
+                            code_norm = (fam.family or "").strip().upper()
+                            if code_norm:
+                                fams_by_code[code_norm] = fam
+                            if fam.product:
+                                fams_by_product.append(fam)
+                        
+                        print(f"🔍 DEBUG: Familias indexadas por código: {list(fams_by_code.keys())}")
+                        print(f"🔍 DEBUG: Familias con productos: {len(fams_by_product)}")
+
+                        # Procesar cada familia del PDF
+                        for item in familias_pdf:
+                            code = (item.get("code") or "").strip().upper()
+                            desc = (item.get("description") or "").strip().lower()
+                            fam_match = None
+                            
+                            print(f"🔍 DEBUG: Procesando item - Código: '{code}', Descripción: '{desc}'")
+                            
+                            # Buscar por código exacto
+                            if code and code in fams_by_code:
+                                fam_match = fams_by_code[code]
+                                print(f"✅ DEBUG: Match por código: {code}")
+                            else:
+                                # Buscar por descripción/producto
+                                for fam in fams_by_product:
+                                    prod = (fam.product or "").strip().lower()
+                                    if not prod:
+                                        continue
+                                    if desc and (desc in prod or prod in desc):
+                                        fam_match = fam
+                                        print(f"✅ DEBUG: Match por descripción: '{desc}' <-> '{prod}'")
+                                        break
+                            
+                            if fam_match and fam_match.id not in matched_ids:
+                                matched_fams.append(fam_match)
+                                matched_ids.append(fam_match.id)
+                                print(f"✅ DEBUG: Familia agregada: {fam_match.family} - {fam_match.product}")
+
+                    # Si no se encontraron familias mapeadas, crear familias temporales del PDF
+                    if not matched_fams and familias_pdf:
+                        print(f"⚠️  DEBUG: No hay familias del cliente, creando familias temporales del PDF")
+                        for item in familias_pdf:
+                            temp_fam = Fam(
+                                id="",  # Sin ID porque no está en Firestore
+                                family=(item.get("code") or "").strip(),
+                                product=(item.get("description") or "").strip(),
+                                client=client_name,
+                                client_id=client_found.id if client_found else "",
+                                area=area_filter or "",
+                                status="TEMPORAL"  # Marcar como temporal
+                            )
+                            matched_fams.append(temp_fam)
+                            print(f"✅ DEBUG: Familia temporal creada: {temp_fam.family} - {temp_fam.product}")
+
+                    self.cotizacion_detalle.familys = matched_fams
+                    self.cotizacion_detalle.familys_ids = matched_ids
+                    print(f"🔍 DEBUG: RESULTADO FINAL - Familias mapeadas: {len(matched_fams)}")
+                    
+                except Exception as e_map:
+                    print(f"⚠️  No se pudo mapear familias: {e_map}")
+                    import traceback
+                    print(f"🔍 DEBUG: Traceback completo:")
+                    traceback.print_exc()
             except Exception as e:
                 self.cotizacion_detalle_pdf_error = str(e)
     id_token: str = rx.LocalStorage()
@@ -79,6 +273,7 @@ class AppState(rx.State):
     
     # Cotización de detalle para la vista individual
     cotizacion_detalle: Cot = Cot()
+    cotizacion_detalle_client: Client = Client()  # Cliente encontrado o creado desde la cotización
     
     # Datos extraídos del PDF de la cotización seleccionada
     cotizacion_detalle_pdf_metadata: str = ""
@@ -634,30 +829,6 @@ class AppState(rx.State):
                     return area_info.get("id")
         return None  # Retorna None si no se encuentra el título
     
-    @rx.event
-    async def extraer_pdf_cotizacion_detalle(self):
-        """Extrae los datos del PDF de la cotización seleccionada y los guarda en el estado como string."""
-        from ..api.cotizacion_extractor import get_cotizacion_full_data_from_drive
-        import json
-        
-        # Limpiar datos anteriores
-        self.cotizacion_detalle_pdf_metadata = ""
-        self.cotizacion_detalle_pdf_tablas = ""
-        self.cotizacion_detalle_pdf_condiciones = ""
-        self.cotizacion_detalle_pdf_error = ""
-        
-        file_id = self.cotizacion_detalle.drive_file_id
-        if file_id:
-            try:
-                print(f"🔍 Extrayendo datos del PDF: {file_id}")
-                data = get_cotizacion_full_data_from_drive(file_id)
-                self.cotizacion_detalle_pdf_metadata = json.dumps(data.get("metadata", {}), ensure_ascii=False, indent=2)
-                self.cotizacion_detalle_pdf_tablas = json.dumps(data.get("tablas", []), ensure_ascii=False, indent=2)
-                self.cotizacion_detalle_pdf_condiciones = str(data.get("condiciones", ""))
-                print(f"✅ PDF extraído exitosamente")
-            except Exception as e:
-                print(f"❌ Error al extraer PDF: {e}")
-                self.cotizacion_detalle_pdf_error = str(e)
     
     @rx.event
     async def cargar_cotizacion_detalle(self):
@@ -738,6 +909,184 @@ class AppState(rx.State):
                 return date_str
         
         return date_str
+    
+    @rx.var
+    def cotizacion_detalle_descripcion_productos(self) -> list[dict]:
+        """Extrae las descripciones de productos desde las tablas del PDF."""
+        try:
+            if not self.cotizacion_detalle_pdf_tablas:
+                return []
+            
+            import json
+            tablas = json.loads(self.cotizacion_detalle_pdf_tablas)
+            productos = []
+            
+            for tabla in tablas:
+                if isinstance(tabla, list) and len(tabla) > 0:
+                    # Buscar tabla que contenga "DESCRIPCIÓN" en el header
+                    headers = tabla[0] if tabla else []
+                    if any("DESCRIPCIÓN" in str(header).upper() for header in headers):
+                        # Procesar filas de productos
+                        for i, fila in enumerate(tabla[1:], 1):  # Skip header
+                            if isinstance(fila, list) and len(fila) > 0:
+                                descripcion = str(fila[0]).strip() if fila[0] else ""
+                                if descripcion and not descripcion.upper().startswith(("TOTAL", "SUBTOTAL")):
+                                    productos.append({
+                                        "descripcion": descripcion,
+                                        "fila_completa": fila
+                                    })
+            
+            return productos[:10]  # Limitar a 10 productos
+            
+        except Exception as e:
+            print(f"Error al parsear productos: {e}")
+            return []
+    
+    @rx.var 
+    def cotizacion_detalle_descripcion_trabajos(self) -> list[dict]:
+        """Extrae la descripción de trabajos desde las tablas del PDF."""
+        try:
+            if not self.cotizacion_detalle_pdf_tablas:
+                return []
+            
+            import json
+            tablas = json.loads(self.cotizacion_detalle_pdf_tablas)
+            trabajos = []
+            
+            print(f"🔍 DEBUG: Buscando trabajos en {len(tablas)} tablas/items")
+            
+            for idx, tabla in enumerate(tablas):
+                print(f"🔍 DEBUG: Procesando tabla {idx}: {type(tabla)}")
+                
+                # Caso 1: Tabla estándar (lista de listas)
+                if isinstance(tabla, list) and len(tabla) > 0:
+                    headers = tabla[0] if tabla else []
+                    print(f"🔍 DEBUG: Headers encontrados: {headers}")
+                    
+                    # Buscar tabla con columnas DESCRIPCIÓN, CANTIDAD, PRECIO (formato estándar)
+                    if (any("DESCRIPCIÓN DE TRABAJOS" not in str(h).upper() for h in headers) and 
+                        any("CANTIDAD" in str(h).upper() for h in headers) and
+                        any("PRECIO" in str(h).upper() for h in headers)):
+                        
+                        print(f"✅ DEBUG: Tabla de trabajos estándar encontrada")
+                        # Encontrar índices de columnas
+                        desc_idx = next((i for i, h in enumerate(headers) if "DESCRIPCIÓN DE TRABAJOS" not in str(h).upper()), 0)
+                        cant_idx = next((i for i, h in enumerate(headers) if "CANTIDAD" in str(h).upper()), -1)
+                        precio_idx = next((i for i, h in enumerate(headers) if "PRECIO" in str(h).upper()), -1)
+                        
+                        # Procesar filas
+                        for fila in tabla[1:]:  # Skip header
+                            if isinstance(fila, list) and len(fila) > desc_idx:
+                                descripcion = str(fila[desc_idx]).strip() if len(fila) > desc_idx else ""
+                                cantidad = str(fila[cant_idx]).strip() if cant_idx >= 0 and len(fila) > cant_idx else ""
+                                precio = str(fila[precio_idx]).strip() if precio_idx >= 0 and len(fila) > precio_idx else ""
+                                
+                                if descripcion and not descripcion.upper().startswith(("TOTAL", "SUBTOTAL")):
+                                    trabajos.append({
+                                        "descripcion": descripcion,
+                                        "cantidad": cantidad,
+                                        "precio": precio
+                                    })
+                                    print(f"✅ DEBUG: Trabajo estándar agregado: {descripcion} | {cantidad} | {precio}")
+                    
+                    # Buscar tabla con "DESCRIPCIÓN DE TRABAJOS" (formato específico)
+                    elif any("DESCRIPCIÓN DE TRABAJOS" in str(h).upper() for h in headers):
+                        print(f"✅ DEBUG: Tabla de trabajos con 'DESCRIPCIÓN DE TRABAJOS' encontrada")
+                        
+                        # Encontrar índices de columnas
+                        desc_idx = next((i for i, h in enumerate(headers) if "DESCRIPCIÓN DE TRABAJOS" in str(h).upper()), 0)
+                        cant_idx = next((i for i, h in enumerate(headers) if "CANTIDAD" in str(h).upper()), -1)
+                        precio_idx = next((i for i, h in enumerate(headers) if "PRECIO" in str(h).upper()), -1)
+                        
+                        print(f"🔍 DEBUG: Índices - Descripción: {desc_idx}, Cantidad: {cant_idx}, Precio: {precio_idx}")
+                        
+                        # Procesar filas
+                        for row_idx, fila in enumerate(tabla[1:], 1):  # Skip header
+                            if isinstance(fila, list):
+                                print(f"🔍 DEBUG: Procesando fila {row_idx}: {fila}")
+                                
+                                descripcion = str(fila[desc_idx]).strip() if len(fila) > desc_idx else ""
+                                cantidad = str(fila[cant_idx]).strip() if cant_idx >= 0 and len(fila) > cant_idx else ""
+                                precio = str(fila[precio_idx]).strip() if precio_idx >= 0 and len(fila) > precio_idx else ""
+                                
+                                print(f"🔍 DEBUG: Extraído - Desc: '{descripcion}', Cant: '{cantidad}', Precio: '{precio}'")
+                                
+                                # Filtrar filas vacías o con texto de placeholder
+                                if (descripcion and 
+                                    descripcion.lower() != "sin trabajos disponibles" and 
+                                    not descripcion.upper().startswith(("TOTAL", "SUBTOTAL"))):
+                                    
+                                    trabajos.append({
+                                        "descripcion": descripcion,
+                                        "cantidad": cantidad if cantidad else "N/A",
+                                        "precio": precio if precio else "N/A"
+                                    })
+                                    print(f"✅ DEBUG: Trabajo agregado: {descripcion} | {cantidad} | {precio}")
+                                elif descripcion:
+                                    print(f"⚠️  DEBUG: Trabajo filtrado: '{descripcion}' (placeholder o total)")
+                
+                # Caso 2: Dict individual (formato de extracción de pdfplumber)
+                elif isinstance(tabla, dict):
+                    print(f"🔍 DEBUG: Procesando dict: {tabla.keys()}")
+                    
+                    # Buscar claves relacionadas con trabajos
+                    descripcion, cantidad, precio = "", "", ""
+                    
+                    for key, value in tabla.items():
+                        key_upper = str(key).upper()
+                        value_str = str(value).strip()
+                        
+                        if "DESCRIPCIÓN DE TRABAJOS" in key_upper or "DESCRIPCIÓN" in key_upper:
+                            descripcion = value_str
+                        elif "CANTIDAD" in key_upper:
+                            cantidad = value_str
+                        elif "PRECIO" in key_upper:
+                            precio = value_str
+                    
+                    # Solo agregar si tiene descripción válida
+                    if (descripcion and 
+                        descripcion.lower() != "sin trabajos disponibles" and
+                        not descripcion.upper().startswith(("TOTAL", "SUBTOTAL"))):
+                        
+                        trabajos.append({
+                            "descripcion": descripcion,
+                            "cantidad": cantidad if cantidad else "N/A",
+                            "precio": precio if precio else "N/A"
+                        })
+                        print(f"✅ DEBUG: Trabajo de dict agregado: {descripcion} | {cantidad} | {precio}")
+            
+            print(f"🔍 DEBUG: Total trabajos encontrados: {len(trabajos)}")
+            for i, trabajo in enumerate(trabajos):
+                print(f"🔍 DEBUG: Trabajo {i+1}: {trabajo}")
+            
+            return trabajos[:15]  # Limitar a 15 trabajos
+            
+        except Exception as e:
+            print(f"Error al parsear trabajos: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    @rx.var
+    def cotizacion_detalle_familys_count(self) -> int:
+        """Devuelve el número de familias en la cotización de detalle."""
+        count = len(self.cotizacion_detalle.familys)
+        print(f"🔍 DEBUG: cotizacion_detalle_familys_count = {count}")
+        return count
+    
+    @rx.var
+    def cotizacion_detalle_productos_count(self) -> int:
+        """Devuelve el número de productos extraídos del PDF."""
+        count = len(self.cotizacion_detalle_descripcion_productos)
+        print(f"🔍 DEBUG: cotizacion_detalle_productos_count = {count}")
+        return count
+    
+    @rx.var
+    def cotizacion_detalle_trabajos_count(self) -> int:
+        """Devuelve el número de trabajos extraídos del PDF."""
+        count = len(self.cotizacion_detalle_descripcion_trabajos)
+        print(f"🔍 DEBUG: cotizacion_detalle_trabajos_count = {count}")
+        return count
     
     def format_date_display(self, date_str: str) -> str:
         """Formatea fechas para mostrar en la interfaz."""
