@@ -175,6 +175,52 @@ class AlgoliaAPI:
             print(f"❌ Error en búsqueda de Algolia (familias): {e}")
             return {}
     
+    async def search_clients(self, query: str, page: int = 0, hits_per_page: int = 20, area: str = "", filters: Dict = None) -> Dict:
+        """
+        Busca clientes en Algolia con paginación
+        """
+        if not self.enabled:
+            print("⚠️  Algolia no está habilitado, usando búsqueda local")
+            return {}
+            
+        try:
+            print(f"🔍 Iniciando búsqueda de clientes en Algolia: '{query}', página: {page}")
+            if area:
+                print(f"🔍 Filtrando por área: {area}")
+            if filters:
+                print(f"🔍 Filtros adicionales: {filters}")
+            
+            from algoliasearch.search.client import SearchClientSync
+            sync_client = SearchClientSync(self.app_id, self.search_key)
+            
+            # Agregar filtros si se proporcionan
+            algolia_filters = []
+            if area:
+                algolia_filters.append(f"area:{area}")
+            if filters:
+                for key, value in filters.items():
+                    algolia_filters.append(f"{key}:{value}")
+            
+            if algolia_filters:
+                print(f"🔍 Filtros aplicados: {' AND '.join(algolia_filters)}")
+            
+            results = sync_client.search_single_index(
+                index_name="clientes", 
+                search_params={
+                    "query": query,
+                    "page": page,
+                    "hitsPerPage": hits_per_page,
+                    **({} if not algolia_filters else {"filters": " AND ".join(algolia_filters)})
+                }
+            )
+            
+            print(f"🔍 Algolia encontró {results.nb_hits} clientes para '{query}'")
+            return {"hits": results.hits, "nbHits": results.nb_hits, "page": results.page, "nbPages": results.nb_pages, "hitsPerPage": results.hits_per_page}
+            
+        except Exception as e:
+            print(f"❌ Error en búsqueda de Algolia (clientes): {e}")
+            return {}
+    
     def index_data(self, index_name: str, records: List[Dict]) -> bool:
         """
         Indexa datos en Algolia (requiere API key con permisos de escritura)

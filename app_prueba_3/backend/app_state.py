@@ -5,7 +5,7 @@ import os, json
 from dotenv import load_dotenv
 from ..api.firestore_api import firestore_api
 from ..api.algolia_api import algolia_api
-from ..api.algolia_utils import algolia_to_cot, algolia_to_certs, algolia_to_fam
+from ..api.algolia_utils import algolia_to_cot, algolia_to_certs, algolia_to_fam, algolia_to_client
 from ..utils import User, Fam, Certs, Cot, Client, buscar_fams, buscar_cots
 from datetime import datetime
 import time
@@ -60,35 +60,57 @@ class AppState(rx.State):
                 client_name = (meta.get("empresa") or "").strip()
                 if client_name:
                     self.cotizacion_detalle.client = client_name
+                    # Si no hay campo "Facturar a", usar el mismo cliente
+                    if not self.cotizacion_detalle.facturar:
+                        self.cotizacion_detalle.facturar = client_name
                 if meta.get("fecha"):
                     self.cotizacion_detalle.issuedate = meta.get("fecha")
                 if meta.get("dirigido_a"):
                     self.cotizacion_detalle.nombre = meta.get("dirigido_a").strip()
                 if meta.get("consultora"):
                     self.cotizacion_detalle.consultora = meta.get("consultora").strip()
+                else:
+                    # Si no hay consultora en el PDF, usar "BV" por defecto
+                    self.cotizacion_detalle.consultora = "BV"
                 if meta.get("mail_receptor"):
                     self.cotizacion_detalle.email = meta.get("mail_receptor").strip()
                 if meta.get("revision"):
                     self.cotizacion_detalle.rev = str(meta.get("revision")).strip()
 
-                # 1. BUSCAR CLIENTE EN FIRESTORE O CREAR DESDE COTIZACIÓN
+                # 1. BUSCAR CLIENTE EN ALGOLIA PRIMERO, LUEGO FIRESTORE O CREAR DESDE COTIZACIÓN
                 try:
                     area_filter = self.user_data.current_area if self.user_data.current_area else None
                     print(f"🔍 DEBUG: Buscando cliente '{client_name}' en área: {area_filter}")
                     
                     client_found = None
                     
-                    # Primero buscar con filtro exacto en el área
-                    if client_name:
+                    # 1A. Primero intentar búsqueda en Algolia
+                    if client_name and algolia_api.enabled:
+                        print(f"🔍 DEBUG: Buscando en Algolia: '{client_name}'")
+                        algolia_results = await algolia_api.search_clients(
+                            query=client_name,
+                            area=area_filter,
+                            hits_per_page=5  # Solo los 5 más relevantes
+                        )
+                        
+                        if algolia_results and algolia_results.get("hits"):
+                            # Convertir el primer resultado (más relevante) a objeto Client
+                            best_match_hit = algolia_results["hits"][0]
+                            best_match = dict(best_match_hit)  # Convertir Hit object a diccionario
+                            client_found = algolia_to_client(best_match)
+                            print(f"✅ DEBUG: Cliente encontrado en Algolia: {client_found.razonsocial} (Score: {best_match.get('_score', 'N/A')})")
+                    
+                    # 1B. Si no se encuentra en Algolia, buscar con filtro exacto en Firestore (área)
+                    if not client_found and client_name:
                         clients_exact = firestore_api.get_clients(
                             area=area_filter,
                             filter=[("razonsocial", "==", client_name)]
                         )
                         if clients_exact:
                             client_found = clients_exact[0]
-                            print(f"✅ DEBUG: Cliente encontrado exacto en área: {client_found.razonsocial}")
+                            print(f"✅ DEBUG: Cliente encontrado exacto en Firestore (área): {client_found.razonsocial}")
                     
-                    # Si no se encuentra exacto, buscar sin filtro de área
+                    # 1C. Si no se encuentra exacto, buscar sin filtro de área en Firestore
                     if not client_found and client_name:
                         clients_exact_no_area = firestore_api.get_clients(
                             area=None,
@@ -96,18 +118,30 @@ class AppState(rx.State):
                         )
                         if clients_exact_no_area:
                             client_found = clients_exact_no_area[0]
-                            print(f"✅ DEBUG: Cliente encontrado exacto sin área: {client_found.razonsocial}")
+                            print(f"✅ DEBUG: Cliente encontrado exacto en Firestore (sin área): {client_found.razonsocial}")
                     
-                    # Si aún no se encuentra, buscar por similitud
+                    # 1D. Si aún no se encuentra, buscar por similitud en Firestore
                     if not client_found and client_name:
+                        print(f"🔍 DEBUG: Intentando búsqueda por similitud en área: {area_filter}")
                         clients_similar = firestore_api.search_clients_by_similarity(
                             razonsocial=client_name,
                             area=area_filter,
-                            similarity_threshold=0.7
+                            similarity_threshold=0.9
                         )
                         if clients_similar:
                             client_found = clients_similar[0]
-                            print(f"✅ DEBUG: Cliente encontrado por similitud: {client_found.razonsocial}")
+                            print(f"✅ DEBUG: Cliente encontrado por similitud en Firestore (área): {client_found.razonsocial}")
+                        else:
+                            # Si no encuentra con área, probar sin área
+                            print(f"🔍 DEBUG: Intentando búsqueda por similitud SIN área")
+                            clients_similar_no_area = firestore_api.search_clients_by_similarity(
+                                razonsocial=client_name,
+                                area=None,
+                                similarity_threshold=0.9
+                            )
+                            if clients_similar_no_area:
+                                client_found = clients_similar_no_area[0]
+                                print(f"✅ DEBUG: Cliente encontrado por similitud en Firestore (sin área): {client_found.razonsocial}")
                     
                     # Si se encuentra cliente, usar sus datos
                     if client_found:
@@ -115,8 +149,14 @@ class AppState(rx.State):
                         self.cotizacion_detalle.client_id = client_found.id
                         # Actualizar datos de cotización con datos del cliente
                         self.cotizacion_detalle.client = client_found.razonsocial
+                        # Si no hay "Facturar a", usar el mismo cliente
+                        if not self.cotizacion_detalle.facturar:
+                            self.cotizacion_detalle.facturar = client_found.razonsocial
                         if client_found.consultora and not self.cotizacion_detalle.consultora:
                             self.cotizacion_detalle.consultora = client_found.consultora
+                        elif not self.cotizacion_detalle.consultora:
+                            # Si ni el cliente ni el PDF tienen consultora, usar "BV" por defecto
+                            self.cotizacion_detalle.consultora = "BV"
                         print(f"✅ DEBUG: Cliente configurado: {client_found.razonsocial} (ID: {client_found.id})")
                     else:
                         # Si no se encuentra, crear cliente temporal con datos de la cotización
@@ -124,7 +164,7 @@ class AppState(rx.State):
                         self.cotizacion_detalle_client = Client(
                             id="",  # Sin ID porque no está en Firestore
                             razonsocial=client_name,
-                            consultora=meta.get("consultora", ""),
+                            consultora=meta.get("consultora", "BV").strip() if meta.get("consultora") else "BV",
                             email_cotizacion=meta.get("mail_receptor", ""),
                         )
                         print(f"✅ DEBUG: Cliente temporal creado: {client_name}")
@@ -964,14 +1004,15 @@ class AppState(rx.State):
                     print(f"🔍 DEBUG: Headers encontrados: {headers}")
                     
                     # Buscar tabla con columnas DESCRIPCIÓN, CANTIDAD, PRECIO (formato estándar)
-                    if (any("DESCRIPCIÓN DE TRABAJOS" not in str(h).upper() for h in headers) and 
-                        any("CANTIDAD" in str(h).upper() for h in headers) and
+                    # PERO que NO sea la tabla de productos
+                    if (any("DESCRIPCIÓN" in str(h).upper() and "PRODUCTOS" not in str(h).upper() and "TRABAJOS" not in str(h).upper() for h in headers) and 
+                        any("CANTIDAD" in str(h).upper() or "CANT" in str(h).upper() for h in headers) and
                         any("PRECIO" in str(h).upper() for h in headers)):
                         
                         print(f"✅ DEBUG: Tabla de trabajos estándar encontrada")
                         # Encontrar índices de columnas
-                        desc_idx = next((i for i, h in enumerate(headers) if "DESCRIPCIÓN DE TRABAJOS" not in str(h).upper()), 0)
-                        cant_idx = next((i for i, h in enumerate(headers) if "CANTIDAD" in str(h).upper()), -1)
+                        desc_idx = next((i for i, h in enumerate(headers) if "DESCRIPCIÓN" in str(h).upper() and "PRODUCTOS" not in str(h).upper() and "TRABAJOS" not in str(h).upper()), 0)
+                        cant_idx = next((i for i, h in enumerate(headers) if "CANTIDAD" in str(h).upper() or "CANT" in str(h).upper()), -1)
                         precio_idx = next((i for i, h in enumerate(headers) if "PRECIO" in str(h).upper()), -1)
                         
                         # Procesar filas
@@ -995,7 +1036,7 @@ class AppState(rx.State):
                         
                         # Encontrar índices de columnas
                         desc_idx = next((i for i, h in enumerate(headers) if "DESCRIPCIÓN DE TRABAJOS" in str(h).upper()), 0)
-                        cant_idx = next((i for i, h in enumerate(headers) if "CANTIDAD" in str(h).upper()), -1)
+                        cant_idx = next((i for i, h in enumerate(headers) if "CANTIDAD" in str(h).upper() or "CANT" in str(h).upper()), -1)
                         precio_idx = next((i for i, h in enumerate(headers) if "PRECIO" in str(h).upper()), -1)
                         
                         print(f"🔍 DEBUG: Índices - Descripción: {desc_idx}, Cantidad: {cant_idx}, Precio: {precio_idx}")
@@ -1014,7 +1055,8 @@ class AppState(rx.State):
                                 # Filtrar filas vacías o con texto de placeholder
                                 if (descripcion and 
                                     descripcion.lower() != "sin trabajos disponibles" and 
-                                    not descripcion.upper().startswith(("TOTAL", "SUBTOTAL"))):
+                                    not descripcion.upper().startswith(("TOTAL", "SUBTOTAL")) and
+                                    not descripcion.upper().startswith(("FLIA", "FAMILIA"))):  # Evitar productos
                                     
                                     trabajos.append({
                                         "descripcion": descripcion,
@@ -1023,37 +1065,41 @@ class AppState(rx.State):
                                     })
                                     print(f"✅ DEBUG: Trabajo agregado: {descripcion} | {cantidad} | {precio}")
                                 elif descripcion:
-                                    print(f"⚠️  DEBUG: Trabajo filtrado: '{descripcion}' (placeholder o total)")
+                                    print(f"⚠️  DEBUG: Trabajo filtrado: '{descripcion}' (placeholder, total o producto)")
                 
                 # Caso 2: Dict individual (formato de extracción de pdfplumber)
                 elif isinstance(tabla, dict):
                     print(f"🔍 DEBUG: Procesando dict: {tabla.keys()}")
                     
-                    # Buscar claves relacionadas con trabajos
-                    descripcion, cantidad, precio = "", "", ""
-                    
-                    for key, value in tabla.items():
-                        key_upper = str(key).upper()
-                        value_str = str(value).strip()
+                    # Solo procesar si es específicamente de trabajos, no de productos
+                    if "DESCRIPCIÓN DE TRABAJOS" in tabla.keys():
+                        descripcion, cantidad, precio = "", "", ""
                         
-                        if "DESCRIPCIÓN DE TRABAJOS" in key_upper or "DESCRIPCIÓN" in key_upper:
-                            descripcion = value_str
-                        elif "CANTIDAD" in key_upper:
-                            cantidad = value_str
-                        elif "PRECIO" in key_upper:
-                            precio = value_str
-                    
-                    # Solo agregar si tiene descripción válida
-                    if (descripcion and 
-                        descripcion.lower() != "sin trabajos disponibles" and
-                        not descripcion.upper().startswith(("TOTAL", "SUBTOTAL"))):
+                        for key, value in tabla.items():
+                            key_upper = str(key).upper()
+                            value_str = str(value).strip()
+                            
+                            if "DESCRIPCIÓN DE TRABAJOS" in key_upper:
+                                descripcion = value_str
+                            elif ("CANTIDAD" in key_upper or "CANT" in key_upper) and "PRECIO" not in key_upper:
+                                cantidad = value_str
+                            elif "PRECIO" in key_upper:
+                                precio = value_str
                         
-                        trabajos.append({
-                            "descripcion": descripcion,
-                            "cantidad": cantidad if cantidad else "N/A",
-                            "precio": precio if precio else "N/A"
-                        })
-                        print(f"✅ DEBUG: Trabajo de dict agregado: {descripcion} | {cantidad} | {precio}")
+                        # Solo agregar si tiene descripción válida y no es descripción de productos
+                        if (descripcion and 
+                            descripcion.lower() != "sin trabajos disponibles" and
+                            not descripcion.upper().startswith(("TOTAL", "SUBTOTAL")) and
+                            not descripcion.upper().startswith(("FLIA", "FAMILIA"))):
+                            
+                            trabajos.append({
+                                "descripcion": descripcion,
+                                "cantidad": cantidad if cantidad else "N/A",
+                                "precio": precio if precio else "N/A"
+                            })
+                            print(f"✅ DEBUG: Trabajo de dict agregado: {descripcion} | {cantidad} | {precio}")
+                        elif descripcion:
+                            print(f"⚠️  DEBUG: Dict filtrado: '{descripcion[:50]}...' (es descripción de producto)")
             
             print(f"🔍 DEBUG: Total trabajos encontrados: {len(trabajos)}")
             for i, trabajo in enumerate(trabajos):

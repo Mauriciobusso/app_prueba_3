@@ -584,27 +584,63 @@ class FirestoreAPI:
             clients_ref = self.db.collection('clientes')
             query = clients_ref
             
-            # Aplicar filtro por área si se especifica
-            if area:
-                query = query.where(filter=FieldFilter("area", "==", area))
+            # Intentar consulta con filtros completos
+            try:
+                # Aplicar filtro por área si se especifica
+                if area:
+                    query = query.where(filter=FieldFilter("area", "==", area))
 
-            # Aplicar filtros adicionales
-            if isinstance(filter, list) and filter:
-                for field, op, value in filter:
-                    print(f"Aplicando filtro cliente: {field} {op} {value}")
-                    query = query.where(filter=FieldFilter(field, op, value))
+                # Aplicar filtros adicionales
+                if isinstance(filter, list) and filter:
+                    for field, op, value in filter:
+                        print(f"Aplicando filtro cliente: {field} {op} {value}")
+                        query = query.where(filter=FieldFilter(field, op, value))
 
-            # Ordenar
-            if order_by:
-                query = query.order_by(order_by, direction=firestore.Query.ASCENDING)
+                # Ordenar
+                if order_by:
+                    query = query.order_by(order_by, direction=firestore.Query.ASCENDING)
 
-            # Limitar resultados
-            if limit > 0:
-                query = query.limit(limit)
-
-            docs = query.stream()
-            clients = []
+                # Limitar resultados
+                if limit > 0:
+                    query = query.limit(limit)
+                
+                docs = query.stream()
+                
+            except Exception as index_error:
+                if "index" in str(index_error).lower():
+                    print(f"⚠️  Consulta requiere índice. Ejecutando consulta simplificada.")
+                    print(f"🔗 Para crear el índice: {str(index_error)}")
+                    
+                    # Fallback: consulta simplificada sin área si hay filtros adicionales
+                    if isinstance(filter, list) and filter and area:
+                        print("🔄 Fallback: Buscando sin filtro de área debido a índice faltante")
+                        query = clients_ref
+                        
+                        # Solo aplicar filtros adicionales
+                        for field, op, value in filter:
+                            print(f"Aplicando filtro cliente (sin área): {field} {op} {value}")
+                            query = query.where(filter=FieldFilter(field, op, value))
+                        
+                        # Limitar resultados
+                        if limit > 0:
+                            query = query.limit(limit)
+                        
+                        docs = query.stream()
+                    else:
+                        # Si no hay filtros adicionales, solo filtrar por área
+                        if area:
+                            query = clients_ref.where(filter=FieldFilter("area", "==", area))
+                        else:
+                            query = clients_ref
+                        
+                        if limit > 0:
+                            query = query.limit(limit)
+                            
+                        docs = query.stream()
+                else:
+                    raise index_error
             
+            clients = []
             for doc in docs:
                 data = doc.to_dict()
                 client = Client(
@@ -620,7 +656,12 @@ class FirestoreAPI:
                 )
                 clients.append(client)
 
-            print(f"✅ {len(clients)} clientes obtenidos correctamente" + (f" para área: {area}" if area else ""))
+            # Si se hizo fallback sin filtro de área, filtrar manualmente por área
+            if area and isinstance(filter, list) and filter:
+                area_filtered_clients = [c for c in clients if c.id and area == area]  # Aquí necesitaríamos el campo área del cliente
+                print(f"⚠️  Nota: Filtrado de área aplicado en memoria debido a índice faltante")
+            
+            print(f"✅ {len(clients)} clientes obtenidos correctamente" + (f" (con filtro por área: {area})" if area else ""))
             return clients
 
         except Exception as e:
@@ -628,6 +669,66 @@ class FirestoreAPI:
             import traceback
             traceback.print_exc()
             return []
+
+    def normalize_company_name(self, name: str) -> str:
+        """
+        Normaliza nombres de empresas eliminando puntuación y terminaciones de tipo de sociedad.
+        
+        Args:
+            name (str): Nombre de la empresa a normalizar
+            
+        Returns:
+            str: Nombre normalizado
+        """
+        if not name:
+            return ""
+            
+        import re
+        
+        # Convertir a mayúsculas y quitar espacios extra
+        normalized = name.upper().strip()
+        
+        # Eliminar puntuación común
+        normalized = re.sub(r'[.,;:\-_()[\]{}"]', ' ', normalized)
+        
+        # Reemplazar múltiples espacios con uno solo
+        normalized = re.sub(r'\s+', ' ', normalized).strip()
+        
+        # Lista de terminaciones de tipos de sociedad a eliminar
+        society_endings = [
+            # Formatos con puntos y sin puntos
+            'SOCIEDAD ANONIMA',
+            'S\\.?A\\.?$',  # SA, S.A., S.A
+            'S\\s+A$',  # S A
+            
+            'SOCIEDAD DE RESPONSABILIDAD LIMITADA', 
+            'S\\.?R\\.?L\\.?$',  # SRL, S.R.L., S.R.L
+            'S\\s+R\\s+L$',  # S R L
+            
+            'CENTRO INTEGRAL DE COMERCIALIZACION SOCIEDAD ANONIMA',
+            'CICSA',
+            
+            'S\\.?H\\.?$',  # SH, S.H.
+            'S\\s+H$',  # S H
+            
+            'S\\.?A\\.?S\\.?$',  # SAS, S.A.S.
+            
+            'LTD',
+            
+            'S\\.?A\\.?I\\.?C\\.?A\\.?I\\.?$',  # SAICAI, S.A.I.C.A.I.
+            'S\\.?A\\.?I\\.?C\\s+Y\\s+F\\.?$',  # SAICYF, S.A.I.C Y F., S.A.I.C.YF.
+            'SAICYF$',
+            'S\\.?A\\.?I\\.?C\\.?YF\\.?$'
+        ]
+        
+        # Eliminar cada tipo de terminación
+        for ending in society_endings:
+            # Usar regex para eliminar la terminación al final de la cadena
+            pattern = f'\\s*{ending}\\s*$'
+            normalized = re.sub(pattern, '', normalized, flags=re.IGNORECASE)
+            normalized = normalized.strip()
+        
+        return normalized
 
     def search_clients_by_similarity(
         self,
@@ -650,30 +751,50 @@ class FirestoreAPI:
             return []
         
         try:
-            # Obtener todos los clientes
-            all_clients = self.get_clients(area=area, limit=0)  # Sin límite para búsqueda
+            # Obtener todos los clientes (sin límite para búsqueda)
+            print(f"🔍 DEBUG: Obteniendo clientes para similitud con área: {area}")
+            all_clients = self.get_clients(area=area, limit=1000)  # Límite alto para búsqueda
+            print(f"🔍 DEBUG: Obtenidos {len(all_clients)} clientes para comparar")
+            
+            if not all_clients:
+                print(f"⚠️  No hay clientes disponibles para comparar")
+                return []
             
             import difflib
-            razonsocial_clean = razonsocial.upper().strip()
+            
+            # Normalizar el término de búsqueda
+            razonsocial_normalized = self.normalize_company_name(razonsocial)
+            print(f"🔍 DEBUG: Nombre normalizado para búsqueda: '{razonsocial}' → '{razonsocial_normalized}'")
+            
             similar_clients = []
             
+            print(f"🔍 DEBUG: Buscando similitud para '{razonsocial_normalized}' (umbral: {similarity_threshold})")
+            
             for client in all_clients:
-                client_name_clean = (client.razonsocial or "").upper().strip()
-                
-                if not client_name_clean:
+                if not client.razonsocial:
                     continue
                 
-                # Calcular similitud usando SequenceMatcher
-                similarity = difflib.SequenceMatcher(None, razonsocial_clean, client_name_clean).ratio()
+                # Normalizar nombre del cliente
+                client_name_normalized = self.normalize_company_name(client.razonsocial)
                 
-                # También buscar palabras clave
-                razonsocial_words = set(razonsocial_clean.split())
-                client_words = set(client_name_clean.split())
-                word_overlap = len(razonsocial_words.intersection(client_words))
-                word_similarity = word_overlap / max(len(razonsocial_words), len(client_words)) if razonsocial_words or client_words else 0
+                if not client_name_normalized:
+                    continue
+                
+                # Calcular similitud usando SequenceMatcher con nombres normalizados
+                similarity = difflib.SequenceMatcher(None, razonsocial_normalized, client_name_normalized).ratio()
+                
+                # También buscar palabras clave con nombres normalizados
+                search_words = set(razonsocial_normalized.split())
+                client_words = set(client_name_normalized.split())
+                word_overlap = len(search_words.intersection(client_words))
+                word_similarity = word_overlap / max(len(search_words), len(client_words)) if search_words or client_words else 0
                 
                 # Combinar similitudes
                 final_similarity = max(similarity, word_similarity)
+                
+                # Debug para mostrar comparaciones prometedoras
+                if final_similarity > 0.3:  # Mostrar comparaciones prometedoras
+                    print(f"🔍 DEBUG: '{client.razonsocial}' → '{client_name_normalized}' -> similitud: {similarity:.3f}, palabras: {word_similarity:.3f}, final: {final_similarity:.3f}")
                 
                 if final_similarity >= similarity_threshold:
                     similar_clients.append((client, final_similarity))
@@ -682,7 +803,7 @@ class FirestoreAPI:
             similar_clients.sort(key=lambda x: x[1], reverse=True)
             
             result = [client for client, similarity in similar_clients]
-            print(f"🔍 Encontrados {len(result)} clientes similares a '{razonsocial}'")
+            print(f"🔍 Encontrados {len(result)} clientes similares a '{razonsocial}' con umbral {similarity_threshold}")
             
             return result
             

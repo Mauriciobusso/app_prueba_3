@@ -1,7 +1,7 @@
 """
 Utilidades para Algolia - conversión de datos
 """
-from ..utils import Cot, Certs, Fam,  completar_con_ceros
+from ..utils import Cot, Certs, Fam, Client, completar_con_ceros
 from typing import List, Dict
 from datetime import datetime
 
@@ -64,6 +64,22 @@ def fam_to_algolia(fam: Fam) -> Dict:
         "type": "familia"
     }
 
+def client_to_algolia(client: Client) -> Dict:
+    """Convierte un objeto Client a formato Algolia"""
+    return {
+        "objectID": f"client_{client.id}",
+        "id": client.id,
+        "razonsocial": client.razonsocial,
+        "cuit": client.cuit,
+        "direccion": client.direccion,
+        "phone": client.phone,
+        "email_cotizacion": client.email_cotizacion,
+        "active_fams": client.active_fams,
+        "condiciones": client.condiciones,
+        "consultora": client.consultora,
+        "type": "cliente"
+    }
+
 def algolia_to_cot(hit: Dict) -> Cot:
     """Convierte un resultado de Algolia a objeto Cot"""
     return Cot(
@@ -115,4 +131,18 @@ def algolia_to_fam(hit: Dict) -> Fam:
         expirationdate=timestamp_to_date(hit.get('expirationdate', '')),  # Convertir timestamp si es necesario
         description=hit.get('description', ''),
         area=hit.get('area', '')
+    )
+
+def algolia_to_client(hit: Dict) -> Client:
+    """Convierte un resultado de Algolia a objeto Client"""
+    return Client(
+        id=hit.get('id', hit.get('objectID', '')),
+        razonsocial=hit.get('razonsocial', ''),
+        cuit=hit.get('cuit', ''),
+        direccion=hit.get('direccion', ''),
+        phone=hit.get('phone', ''),
+        email_cotizacion=hit.get('email_cotizacion', ''),
+        active_fams=hit.get('active_fams', 0),
+        condiciones=hit.get('condiciones', ''),
+        consultora=hit.get('consultora', ''),
     )
