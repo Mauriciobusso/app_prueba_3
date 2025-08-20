@@ -71,43 +71,13 @@ class AppState(rx.State):
                 if meta.get("revision"):
                     self.cotizacion_detalle.rev = str(meta.get("revision")).strip()
 
-                # 1. BUSCAR CLIENTE EN FIRESTORE O CREAR DESDE COTIZACIÓN
+                # 1. BUSCAR CLIENTE CON BÚSQUEDA INTELIGENTE
                 try:
-                    area_filter = self.user_data.current_area if self.user_data.current_area else None
-                    print(f"🔍 DEBUG: Buscando cliente '{client_name}' en área: {area_filter}")
-                    
                     client_found = None
                     
-                    # Primero buscar con filtro exacto en el área
                     if client_name:
-                        clients_exact = firestore_api.get_clients(
-                            area=area_filter,
-                            filter=[("razonsocial", "==", client_name)]
-                        )
-                        if clients_exact:
-                            client_found = clients_exact[0]
-                            print(f"✅ DEBUG: Cliente encontrado exacto en área: {client_found.razonsocial}")
-                    
-                    # Si no se encuentra exacto, buscar sin filtro de área
-                    if not client_found and client_name:
-                        clients_exact_no_area = firestore_api.get_clients(
-                            area=None,
-                            filter=[("razonsocial", "==", client_name)]
-                        )
-                        if clients_exact_no_area:
-                            client_found = clients_exact_no_area[0]
-                            print(f"✅ DEBUG: Cliente encontrado exacto sin área: {client_found.razonsocial}")
-                    
-                    # Si aún no se encuentra, buscar por similitud
-                    if not client_found and client_name:
-                        clients_similar = firestore_api.search_clients_by_similarity(
-                            razonsocial=client_name,
-                            area=area_filter,
-                            similarity_threshold=0.7
-                        )
-                        if clients_similar:
-                            client_found = clients_similar[0]
-                            print(f"✅ DEBUG: Cliente encontrado por similitud: {client_found.razonsocial}")
+                        print(f"🔍 DEBUG: Iniciando búsqueda inteligente de cliente: '{client_name}'")
+                        client_found = await self._search_client_intelligent(client_name)
                     
                     # Si se encuentra cliente, usar sus datos
                     if client_found:
@@ -155,6 +125,7 @@ class AppState(rx.State):
                     fams_cliente = []
                     if client_found:
                         try:
+                            area_filter = self.user_data.current_area if self.user_data.current_area else None
                             fams_cliente = firestore_api.get_fams(
                                 area=area_filter,
                                 order_by="razonsocial",
@@ -214,6 +185,7 @@ class AppState(rx.State):
                     # Si no se encontraron familias mapeadas, crear familias temporales del PDF
                     if not matched_fams and familias_pdf:
                         print(f"⚠️  DEBUG: No hay familias del cliente, creando familias temporales del PDF")
+                        area_filter = self.user_data.current_area if self.user_data.current_area else ""
                         for item in familias_pdf:
                             temp_fam = Fam(
                                 id="",  # Sin ID porque no está en Firestore
@@ -2056,3 +2028,196 @@ class AppState(rx.State):
             await firestore_queue.put(data)
         except Exception as e:
             print(f"Error al colocar datos en la cola: {e}")
+
+    def _normalize_company_name(self, name: str) -> str:
+        """
+        Normaliza nombres de empresa eliminando tipos de sociedad y caracteres especiales
+        """
+        if not name:
+            return ""
+        
+        # Convertir a mayúsculas y quitar acentos
+        normalized = name.upper().strip()
+        # Normalizar acentos
+        import unicodedata
+        normalized = unicodedata.normalize('NFD', normalized)
+        normalized = ''.join(char for char in normalized if unicodedata.category(char) != 'Mn')
+        
+        # Lista de tipos de sociedad comunes a eliminar
+        company_types = [
+            "S.A.", "SA", "S.A", "SOCIEDAD ANONIMA", "SOCIEDAD ANÓNIMA", "SOCIEDAD ANÓNIMA",
+            "S.R.L.", "SRL", "S.R.L", "SOCIEDAD RESPONSABILIDAD LIMITADA", "SOCIEDAD DE RESPONSABILIDAD LIMITADA",
+            "S.L.", "SL", "SOCIEDAD LIMITADA",
+            "S.C.", "SC", "SOCIEDAD COLECTIVA", 
+            "LTDA", "LTDA.", "LIMITADA",
+            "CIA", "CIA.", "COMPAÑIA", "COMPAÑÍA", "COMPANIA",
+            "INC", "INC.", "INCORPORATED",
+            "LLC", "LLC.", "LIMITED LIABILITY COMPANY",
+            "LTD", "LTD.", "LIMITED",
+            "CORP", "CORP.", "CORPORATION",
+            "CO.", "COMPANY",  # Solo CO. con punto, no CO solo
+        ]
+        
+        # Eliminar tipos de sociedad (al final o precedidos por espacio)
+        for company_type in company_types:
+            # Al final de la cadena
+            if normalized.endswith(" " + company_type):
+                normalized = normalized[:-len(" " + company_type)]
+            elif normalized.endswith(company_type) and company_type != "CO":  # Evitar eliminar CO solo
+                normalized = normalized[:-len(company_type)]
+            
+            # En medio o al principio (precedido por espacio)
+            normalized = normalized.replace(" " + company_type + " ", " ")
+            if normalized.startswith(company_type + " ") and company_type != "CO":
+                normalized = normalized[len(company_type + " "):]
+        
+        # Eliminar puntos, comas y otros caracteres especiales
+        import re
+        normalized = re.sub(r'[.,;:\-_()[\]{}]', ' ', normalized)
+        
+        # Eliminar espacios múltiples y strip
+        normalized = ' '.join(normalized.split())
+        
+        return normalized.strip()
+
+    async def _search_client_intelligent(self, client_name: str):
+        """
+        Búsqueda inteligente de cliente:
+        1. Busca en Algolia (sin filtro de área)
+        2. Si falla, busca en Firestore (sin filtro de área)
+        3. Normaliza nombres para ignorar tipos de sociedad
+        """
+        if not client_name:
+            return None
+            
+        try:
+            # Normalizar el nombre de búsqueda
+            normalized_search = self._normalize_company_name(client_name)
+            print(f"🔍 DEBUG: Búsqueda normalizada: '{client_name}' → '{normalized_search}'")
+            
+            # 1. INTENTAR BÚSQUEDA EN ALGOLIA PRIMERO
+            try:
+                print(f"🔍 DEBUG: Buscando en Algolia sin filtro de área...")
+                algolia_results = await algolia_api.search_clients(
+                    query=normalized_search,
+                    page=0,
+                    hits_per_page=10,
+                    area="",  # Sin filtro de área
+                    filters=None
+                )
+                
+                if algolia_results and algolia_results.get("hits"):
+                    # Buscar coincidencia exacta o muy similar en resultados de Algolia
+                    for hit in algolia_results["hits"]:
+                        # Convertir hit a diccionario si es necesario
+                        hit_dict = hit.to_dict() if hasattr(hit, 'to_dict') else hit
+                        hit_name = hit_dict.get("razonsocial", "")
+                        hit_normalized = self._normalize_company_name(hit_name)
+                        
+                        # Verificar coincidencia exacta normalizada
+                        if hit_normalized == normalized_search:
+                            print(f"✅ DEBUG: Cliente encontrado exacto en Algolia: '{hit_name}' (normalizado: '{hit_normalized}')")
+                            # Convertir hit de Algolia a objeto Client
+                            from ..utils import Client
+                            return Client(
+                                id=hit_dict.get("objectID", ""),
+                                razonsocial=hit_name,
+                                consultora=hit_dict.get("consultora", ""),
+                                email_cotizacion=hit_dict.get("email_cotizacion", ""),
+                                area=hit_dict.get("area", "")
+                            )
+                    
+                    # Si no hay coincidencia exacta, buscar similitud alta
+                    import difflib
+                    best_match = None
+                    best_similarity = 0.0
+                    
+                    for hit in algolia_results["hits"]:
+                        # Convertir hit a diccionario si es necesario
+                        hit_dict = hit.to_dict() if hasattr(hit, 'to_dict') else hit
+                        hit_name = hit_dict.get("razonsocial", "")
+                        hit_normalized = self._normalize_company_name(hit_name)
+                        
+                        if not hit_normalized:
+                            continue
+                            
+                        similarity = difflib.SequenceMatcher(None, normalized_search, hit_normalized).ratio()
+                        
+                        if similarity > best_similarity and similarity >= 0.8:  # Alta similitud
+                            best_similarity = similarity
+                            best_match = hit_dict
+                            print(f"🔍 DEBUG: Candidato Algolia: '{hit_name}' → similitud: {similarity:.3f}")
+                    
+                    if best_match:
+                        print(f"✅ DEBUG: Cliente encontrado por similitud en Algolia: '{best_match.get('razonsocial')}' (similitud: {best_similarity:.3f})")
+                        from ..utils import Client
+                        return Client(
+                            id=best_match.get("objectID", ""),
+                            razonsocial=best_match.get("razonsocial", ""),
+                            consultora=best_match.get("consultora", ""),
+                            email_cotizacion=best_match.get("email_cotizacion", ""),
+                            area=best_match.get("area", "")
+                        )
+                
+                print(f"⚠️  DEBUG: No se encontró cliente en Algolia para '{normalized_search}'")
+                    
+            except Exception as e_algolia:
+                print(f"⚠️  Error en búsqueda Algolia: {e_algolia}")
+            
+            # 2. FALLBACK A FIRESTORE SIN FILTRO DE ÁREA
+            try:
+                print(f"🔍 DEBUG: Buscando en Firestore sin filtro de área...")
+                
+                # Búsqueda exacta normalizada en Firestore
+                all_clients = firestore_api.get_clients(area=None, limit=500)  # Sin filtro de área
+                print(f"🔍 DEBUG: Obtenidos {len(all_clients)} clientes de Firestore para comparar")
+                
+                if all_clients:
+                    # Buscar coincidencia exacta normalizada
+                    for client in all_clients:
+                        if not client.razonsocial:
+                            continue
+                            
+                        client_normalized = self._normalize_company_name(client.razonsocial)
+                        if client_normalized == normalized_search:
+                            print(f"✅ DEBUG: Cliente encontrado exacto en Firestore: '{client.razonsocial}' (normalizado: '{client_normalized}')")
+                            return client
+                    
+                    # Si no hay coincidencia exacta, buscar por similitud alta
+                    import difflib
+                    best_client = None
+                    best_similarity = 0.0
+                    
+                    for client in all_clients:
+                        if not client.razonsocial:
+                            continue
+                            
+                        client_normalized = self._normalize_company_name(client.razonsocial)
+                        if not client_normalized:
+                            continue
+                            
+                        similarity = difflib.SequenceMatcher(None, normalized_search, client_normalized).ratio()
+                        
+                        if similarity > best_similarity and similarity >= 0.8:  # Alta similitud
+                            best_similarity = similarity
+                            best_client = client
+                            print(f"🔍 DEBUG: Candidato Firestore: '{client.razonsocial}' → similitud: {similarity:.3f}")
+                    
+                    if best_client:
+                        print(f"✅ DEBUG: Cliente encontrado por similitud en Firestore: '{best_client.razonsocial}' (similitud: {best_similarity:.3f})")
+                        return best_client
+                
+                print(f"⚠️  DEBUG: No se encontró cliente en Firestore para '{normalized_search}'")
+                    
+            except Exception as e_firestore:
+                print(f"⚠️  Error en búsqueda Firestore: {e_firestore}")
+            
+            # Si no se encuentra en ningún lado
+            print(f"⚠️  DEBUG: Cliente '{client_name}' no encontrado ni en Algolia ni en Firestore")
+            return None
+            
+        except Exception as e:
+            print(f"❌ Error en búsqueda inteligente de cliente: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
