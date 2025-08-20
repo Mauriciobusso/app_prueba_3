@@ -6,6 +6,7 @@ import asyncio
 from .styles.style import *
 from .components.react_oauth_google import GoogleOAuthProvider, GoogleLogin
 from .views.authenticated import certificados_view, familias_view, cotizaciones_view, cotizacion_detalle_view
+from .views.authenticated import cotizacion_new_view
 from .backend.app_state import AppState
 
 from .components.components import table_certificados, table_familias
@@ -38,7 +39,7 @@ def index() -> rx.Component:
         rx.center(
             rx.vstack(
                 rx.heading("Bienvenido", size="7"),
-                rx.link("Ir a página protegida", href="/certificados"),
+                rx.link("Ir a Cotizaciones", href="/cotizaciones"),
                 spacing="4",
                 align="center"
             ),
@@ -49,23 +50,28 @@ def index() -> rx.Component:
 
 def login_view() -> rx.Component:
     """Vista de login con Google OAuth"""
-    return theme_wrapper([
-        GoogleOAuthProvider.create(
-            rx.center(
-                rx.vstack(
-                    rx.heading("Iniciar Sesión", size="7"),
-                    GoogleLogin.create(
-                        on_success=AppState.on_success,
-                        on_error=lambda: rx.window_alert("Error en la autenticación")
-                    ),
-                    spacing="4",
-                    align="center"
-                ),
-                height="100vh"
+    return rx.center(
+        rx.cond(
+            AppState.is_loading_user_initialization,
+            rx.vstack(
+                rx.heading("Bienvenido", size="7"), ##Agregar mail
+                rx.text(AppState.user_email),
+                rx.spinner(size="3", color="blue"),
+                spacing="4",
+                align="center"
             ),
-            client_id=CLIENT_ID
-        )
-    ])
+            rx.vstack(
+                rx.heading("Iniciar Sesión", size="7"),
+                GoogleLogin.create(
+                    on_success=AppState.on_success,
+                    on_error=lambda: rx.window_alert("Error en la autenticación")
+                ),
+                spacing="4",
+                align="center"
+            )
+        ),
+        height="100vh"
+    )
 
 
 def certificados() -> rx.Component:
@@ -138,3 +144,4 @@ app.add_page(certificados, route="/certificados", on_load=AppState.on_mount_cert
 app.add_page(familias, route="/familias", on_load=AppState.on_mount_familias)
 app.add_page(cotizaciones, route="/cotizaciones", on_load=AppState.on_mount_cotizaciones)
 app.add_page(cotizacion_detalle, route="/cotizaciones/[cot_id]", on_load=AppState.cargar_cotizacion_detalle)
+app.add_page(cotizacion_new_view, route="/cotizaciones/new", on_load=AppState.on_mount_cotizaciones)

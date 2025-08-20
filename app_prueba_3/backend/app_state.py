@@ -5,7 +5,7 @@ import os, json
 from dotenv import load_dotenv
 from ..api.firestore_api import firestore_api
 from ..api.algolia_api import algolia_api
-from ..api.algolia_utils import algolia_to_cot, algolia_to_certs, algolia_to_fam, algolia_to_client
+from ..api.algolia_utils import algolia_to_cot, algolia_to_certs, algolia_to_fam
 from ..utils import User, Fam, Certs, Cot, Client, buscar_fams, buscar_cots
 from datetime import datetime
 import time
@@ -60,57 +60,35 @@ class AppState(rx.State):
                 client_name = (meta.get("empresa") or "").strip()
                 if client_name:
                     self.cotizacion_detalle.client = client_name
-                    # Si no hay campo "Facturar a", usar el mismo cliente
-                    if not self.cotizacion_detalle.facturar:
-                        self.cotizacion_detalle.facturar = client_name
                 if meta.get("fecha"):
                     self.cotizacion_detalle.issuedate = meta.get("fecha")
                 if meta.get("dirigido_a"):
                     self.cotizacion_detalle.nombre = meta.get("dirigido_a").strip()
                 if meta.get("consultora"):
                     self.cotizacion_detalle.consultora = meta.get("consultora").strip()
-                else:
-                    # Si no hay consultora en el PDF, usar "BV" por defecto
-                    self.cotizacion_detalle.consultora = "BV"
                 if meta.get("mail_receptor"):
                     self.cotizacion_detalle.email = meta.get("mail_receptor").strip()
                 if meta.get("revision"):
                     self.cotizacion_detalle.rev = str(meta.get("revision")).strip()
 
-                # 1. BUSCAR CLIENTE EN ALGOLIA PRIMERO, LUEGO FIRESTORE O CREAR DESDE COTIZACIÓN
+                # 1. BUSCAR CLIENTE EN FIRESTORE O CREAR DESDE COTIZACIÓN
                 try:
                     area_filter = self.user_data.current_area if self.user_data.current_area else None
                     print(f"🔍 DEBUG: Buscando cliente '{client_name}' en área: {area_filter}")
                     
                     client_found = None
                     
-                    # 1A. Primero intentar búsqueda en Algolia
-                    if client_name and algolia_api.enabled:
-                        print(f"🔍 DEBUG: Buscando en Algolia: '{client_name}'")
-                        algolia_results = await algolia_api.search_clients(
-                            query=client_name,
-                            area=area_filter,
-                            hits_per_page=5  # Solo los 5 más relevantes
-                        )
-                        
-                        if algolia_results and algolia_results.get("hits"):
-                            # Convertir el primer resultado (más relevante) a objeto Client
-                            best_match_hit = algolia_results["hits"][0]
-                            best_match = dict(best_match_hit)  # Convertir Hit object a diccionario
-                            client_found = algolia_to_client(best_match)
-                            print(f"✅ DEBUG: Cliente encontrado en Algolia: {client_found.razonsocial} (Score: {best_match.get('_score', 'N/A')})")
-                    
-                    # 1B. Si no se encuentra en Algolia, buscar con filtro exacto en Firestore (área)
-                    if not client_found and client_name:
+                    # Primero buscar con filtro exacto en el área
+                    if client_name:
                         clients_exact = firestore_api.get_clients(
                             area=area_filter,
                             filter=[("razonsocial", "==", client_name)]
                         )
                         if clients_exact:
                             client_found = clients_exact[0]
-                            print(f"✅ DEBUG: Cliente encontrado exacto en Firestore (área): {client_found.razonsocial}")
+                            print(f"✅ DEBUG: Cliente encontrado exacto en área: {client_found.razonsocial}")
                     
-                    # 1C. Si no se encuentra exacto, buscar sin filtro de área en Firestore
+                    # Si no se encuentra exacto, buscar sin filtro de área
                     if not client_found and client_name:
                         clients_exact_no_area = firestore_api.get_clients(
                             area=None,
@@ -118,30 +96,18 @@ class AppState(rx.State):
                         )
                         if clients_exact_no_area:
                             client_found = clients_exact_no_area[0]
-                            print(f"✅ DEBUG: Cliente encontrado exacto en Firestore (sin área): {client_found.razonsocial}")
+                            print(f"✅ DEBUG: Cliente encontrado exacto sin área: {client_found.razonsocial}")
                     
-                    # 1D. Si aún no se encuentra, buscar por similitud en Firestore
+                    # Si aún no se encuentra, buscar por similitud
                     if not client_found and client_name:
-                        print(f"🔍 DEBUG: Intentando búsqueda por similitud en área: {area_filter}")
                         clients_similar = firestore_api.search_clients_by_similarity(
                             razonsocial=client_name,
                             area=area_filter,
-                            similarity_threshold=0.9
+                            similarity_threshold=0.7
                         )
                         if clients_similar:
                             client_found = clients_similar[0]
-                            print(f"✅ DEBUG: Cliente encontrado por similitud en Firestore (área): {client_found.razonsocial}")
-                        else:
-                            # Si no encuentra con área, probar sin área
-                            print(f"🔍 DEBUG: Intentando búsqueda por similitud SIN área")
-                            clients_similar_no_area = firestore_api.search_clients_by_similarity(
-                                razonsocial=client_name,
-                                area=None,
-                                similarity_threshold=0.9
-                            )
-                            if clients_similar_no_area:
-                                client_found = clients_similar_no_area[0]
-                                print(f"✅ DEBUG: Cliente encontrado por similitud en Firestore (sin área): {client_found.razonsocial}")
+                            print(f"✅ DEBUG: Cliente encontrado por similitud: {client_found.razonsocial}")
                     
                     # Si se encuentra cliente, usar sus datos
                     if client_found:
@@ -149,14 +115,8 @@ class AppState(rx.State):
                         self.cotizacion_detalle.client_id = client_found.id
                         # Actualizar datos de cotización con datos del cliente
                         self.cotizacion_detalle.client = client_found.razonsocial
-                        # Si no hay "Facturar a", usar el mismo cliente
-                        if not self.cotizacion_detalle.facturar:
-                            self.cotizacion_detalle.facturar = client_found.razonsocial
                         if client_found.consultora and not self.cotizacion_detalle.consultora:
                             self.cotizacion_detalle.consultora = client_found.consultora
-                        elif not self.cotizacion_detalle.consultora:
-                            # Si ni el cliente ni el PDF tienen consultora, usar "BV" por defecto
-                            self.cotizacion_detalle.consultora = "BV"
                         print(f"✅ DEBUG: Cliente configurado: {client_found.razonsocial} (ID: {client_found.id})")
                     else:
                         # Si no se encuentra, crear cliente temporal con datos de la cotización
@@ -164,7 +124,7 @@ class AppState(rx.State):
                         self.cotizacion_detalle_client = Client(
                             id="",  # Sin ID porque no está en Firestore
                             razonsocial=client_name,
-                            consultora=meta.get("consultora", "BV").strip() if meta.get("consultora") else "BV",
+                            consultora=meta.get("consultora", ""),
                             email_cotizacion=meta.get("mail_receptor", ""),
                         )
                         print(f"✅ DEBUG: Cliente temporal creado: {client_name}")
@@ -278,6 +238,60 @@ class AppState(rx.State):
                     traceback.print_exc()
             except Exception as e:
                 self.cotizacion_detalle_pdf_error = str(e)
+
+    @rx.event
+    async def extraer_pdf_forzado(self):
+        """Fuerza una nueva extracción del PDF ignorando el caché."""
+        print("🔄 Forzando extracción de PDF ignorando caché...")
+        
+        # Marcar que no está cargado desde cache para forzar procesamiento completo
+        if hasattr(self.cotizacion_detalle, 'loaded_from_cache'):
+            self.cotizacion_detalle.loaded_from_cache = False
+        
+        # Llamar al método principal de extracción
+        yield AppState.extraer_pdf_cotizacion_detalle()
+
+    @rx.event
+    async def reprocesar_cotizacion_detalle(self):
+        """Alias para reprocesar la cotización detalle (usado por el botón en UI)."""
+        yield AppState.extraer_pdf_forzado()
+
+    @rx.event
+    def limpiar_cotizacion_detalle_cache(self):
+        """Limpia el caché de la cotización detalle cuando se sale de la página."""
+        print("🧹 Limpiando cache de cotización detalle...")
+        
+        # Limpiar campos de estado
+        self.cotizacion_detalle_pdf_metadata = ""
+        self.cotizacion_detalle_pdf_tablas = ""
+        self.cotizacion_detalle_pdf_condiciones = ""
+        self.cotizacion_detalle_pdf_error = ""
+        self.cotizacion_detalle_pdf_familias = ""
+        self.cotizacion_detalle_pdf_familias_validacion = ""
+        
+        # Resetear cotización detalle
+        self.cotizacion_detalle = Cot()
+        self.cotizacion_detalle_client = Client()
+        self.cotizacion_detalle_current_id = ""
+        
+        # Desactivar loading state
+        self.is_loading_cotizacion_detalle = False
+        
+        print("✅ Cache de cotización detalle limpiado")
+
+    @rx.event
+    def on_mount_cotizacion_detalle(self):
+        """Método llamado cuando se monta la página de cotización detalle."""
+        print("📋 Montando página de cotización detalle")
+        
+        # Activar estado de loading
+        self.is_loading_cotizacion_detalle = True
+        
+        print("✅ Página de cotización detalle lista")
+        
+        # Desactivar loading state
+        self.is_loading_cotizacion_detalle = False
+
     id_token: str = rx.LocalStorage()
     user_email: str = rx.LocalStorage()     # Nuevo: persistir email del usuario
     session_valid: bool = False             # Nuevo: estado de sesión (no persistente por limitación de Reflex)
@@ -296,6 +310,7 @@ class AppState(rx.State):
     is_loading_areas: bool = False
     is_loading_roles: bool = False
     is_loading_data: bool = False
+    is_loading_cotizacion_detalle: bool = False
     
     # Flags para evitar re-inicializaciones innecesarias
     user_initialized: bool = False
@@ -314,6 +329,7 @@ class AppState(rx.State):
     # Cotización de detalle para la vista individual
     cotizacion_detalle: Cot = Cot()
     cotizacion_detalle_client: Client = Client()  # Cliente encontrado o creado desde la cotización
+    cotizacion_detalle_current_id: str = ""  # ID de la cotización actualmente cargada
     
     # Datos extraídos del PDF de la cotización seleccionada
     cotizacion_detalle_pdf_metadata: str = ""
@@ -323,6 +339,96 @@ class AppState(rx.State):
 
     # Campo de texto de búsqueda temporal (no ejecuta búsqueda automáticamente)
     search_text: str = ""
+    
+    # --- Campos temporales para crear nueva cotización (UI form) ---
+    new_cot_number: str = ""
+    new_cot_issuedate: str = ""
+    new_cot_razonsocial: str = ""
+    new_cot_nombre: str = ""
+    new_cot_consultora: str = "BV"
+    new_cot_facturar: str = ""
+    new_cot_mail: str = ""
+    new_cot_familias: list[str] = []
+    new_cot_trabajos: list[dict] = []
+    new_cot_status: str = ""  # '', 'success', 'error'
+    new_cot_error_message: str = ""
+    
+    # New cotization form methods
+    def add_new_cot_family(self):
+        """Add new family to the new cotization form."""
+        self.new_cot_familias.append("")
+
+    def set_new_cot_family(self, index: int, value: str):
+        """Set family value at specific index."""
+        if 0 <= index < len(self.new_cot_familias):
+            self.new_cot_familias[index] = value
+
+    def remove_new_cot_family(self, index: int):
+        """Remove family at specific index."""
+        if 0 <= index < len(self.new_cot_familias):
+            self.new_cot_familias.pop(index)
+
+    def add_new_cot_trabajo(self):
+        """Add new trabajo to the new cotization form."""
+        self.new_cot_trabajos.append({
+            'descripcion': '',
+            'cantidad': '',
+            'descuento': '',
+            'precio': ''
+        })
+
+    def set_new_cot_trabajo_field(self, index: int, field: str, value: str):
+        """Set trabajo field value at specific index."""
+        if 0 <= index < len(self.new_cot_trabajos):
+            self.new_cot_trabajos[index][field] = value
+
+    def remove_new_cot_trabajo(self, index: int):
+        """Remove trabajo at specific index."""
+        if 0 <= index < len(self.new_cot_trabajos):
+            self.new_cot_trabajos.pop(index)
+
+    def submit_new_cot(self):
+        """Submit new cotization form."""
+        # Reset status
+        self.new_cot_status = ""
+        self.new_cot_error_message = ""
+        
+        # Basic validation
+        if not self.new_cot_razonsocial.strip():
+            self.new_cot_status = "error"
+            self.new_cot_error_message = "La razón social es obligatoria"
+            return
+            
+        if not self.new_cot_nombre.strip():
+            self.new_cot_status = "error"
+            self.new_cot_error_message = "El nombre de contacto es obligatorio"
+            return
+        
+        try:
+            # Here would go the actual creation logic
+            # For now, just show success
+            self.new_cot_status = "success"
+            
+            # Reset form after successful submission
+            yield AppState.reset_new_cot_form
+            
+        except Exception as e:
+            self.new_cot_status = "error"
+            self.new_cot_error_message = f"Error al crear cotización: {str(e)}"
+
+    def reset_new_cot_form(self):
+        """Reset the new cotization form."""
+        self.new_cot_number = ""
+        self.new_cot_issuedate = ""
+        self.new_cot_razonsocial = ""
+        self.new_cot_nombre = ""
+        self.new_cot_consultora = ""
+        self.new_cot_facturar = ""
+        self.new_cot_mail = ""
+        self.new_cot_familias = []
+        self.new_cot_trabajos = []
+        self.new_cot_status = ""
+        self.new_cot_error_message = ""
     
     # Tema (modo oscuro/claro) - DISABLED FOR NOW, KEEP FOR FUTURE USE
     # dark_mode: bool = rx.LocalStorage(False)  # Persistir preferencia del tema
@@ -336,6 +442,34 @@ class AppState(rx.State):
     total_fams: int = 0
     is_loading_more: bool = False
     scroll_threshold: float = 0.8  # Disparar carga cuando llegue al 80% del scroll
+
+    @rx.var
+    def cots_page_info(self) -> str:
+        """Información de paginación para cotizaciones."""
+        total_pages = (len(self.cots) + 29) // 30 if self.cots else 0  # 30 items per page
+        current_page = self.cots_page + 1
+        return f"Página {current_page} de {total_pages}"
+    
+    @rx.var  
+    def cots_has_prev_page(self) -> bool:
+        """Si hay página anterior de cotizaciones."""
+        return self.cots_page > 0
+    
+    @rx.var
+    def cots_has_next_page(self) -> bool:
+        """Si hay página siguiente de cotizaciones."""
+        total_pages = (len(self.cots) + 29) // 30 if self.cots else 0
+        return (self.cots_page + 1) < total_pages
+
+    @rx.var
+    def cots_current_page_display(self) -> int:
+        """Página actual de cotizaciones para mostrar (1-indexed)."""
+        return self.cots_page + 1
+
+    @rx.var
+    def cots_total_pages(self) -> int:
+        """Total de páginas de cotizaciones."""
+        return (len(self.cots) + 29) // 30 if self.cots else 0
 
     values: dict = {
         "collection": "",
@@ -383,6 +517,48 @@ class AppState(rx.State):
     def get_date(self) -> str:
         return self.date    
     
+    # Métodos de paginación para cotizaciones
+    @rx.event
+    def next_cots_page(self):
+        """Ir a la siguiente página de cotizaciones."""
+        total_pages = (len(self.cots) + 29) // 30 if self.cots else 0
+        if (self.cots_page + 1) < total_pages:
+            self.cots_page += 1
+            start_idx = self.cots_page * 30
+            end_idx = min(start_idx + 30, len(self.cots))
+            self.cots_show = self.cots[start_idx:end_idx]
+            print(f"📄 Página siguiente: {self.cots_page + 1}/{total_pages}")
+    
+    @rx.event
+    def prev_cots_page(self):
+        """Ir a la página anterior de cotizaciones."""
+        if self.cots_page > 0:
+            self.cots_page -= 1
+            start_idx = self.cots_page * 30
+            end_idx = min(start_idx + 30, len(self.cots))
+            self.cots_show = self.cots[start_idx:end_idx]
+            total_pages = (len(self.cots) + 29) // 30 if self.cots else 0
+            print(f"📄 Página anterior: {self.cots_page + 1}/{total_pages}")
+    
+    @rx.event
+    def first_cots_page(self):
+        """Ir a la primera página de cotizaciones."""
+        self.cots_page = 0
+        if self.cots:
+            self.cots_show = self.cots[:30]
+            total_pages = (len(self.cots) + 29) // 30
+            print(f"📄 Primera página: 1/{total_pages}")
+    
+    @rx.event
+    def last_cots_page(self):
+        """Ir a la última página de cotizaciones."""
+        if self.cots:
+            total_pages = (len(self.cots) + 29) // 30
+            self.cots_page = max(0, total_pages - 1)
+            start_idx = self.cots_page * 30
+            self.cots_show = self.cots[start_idx:]
+            print(f"📄 Última página: {total_pages}/{total_pages}")
+
     @rx.event
     async def set_current_page(self, page: str):
         """Establece la página actual para cargar los datos apropiados."""
@@ -1003,40 +1179,16 @@ class AppState(rx.State):
                     headers = tabla[0] if tabla else []
                     print(f"🔍 DEBUG: Headers encontrados: {headers}")
                     
-                    # Buscar tabla con columnas DESCRIPCIÓN, CANTIDAD, PRECIO (formato estándar)
-                    # PERO que NO sea la tabla de productos
-                    if (any("DESCRIPCIÓN" in str(h).upper() and "PRODUCTOS" not in str(h).upper() and "TRABAJOS" not in str(h).upper() for h in headers) and 
-                        any("CANTIDAD" in str(h).upper() or "CANT" in str(h).upper() for h in headers) and
-                        any("PRECIO" in str(h).upper() for h in headers)):
-                        
-                        print(f"✅ DEBUG: Tabla de trabajos estándar encontrada")
-                        # Encontrar índices de columnas
-                        desc_idx = next((i for i, h in enumerate(headers) if "DESCRIPCIÓN" in str(h).upper() and "PRODUCTOS" not in str(h).upper() and "TRABAJOS" not in str(h).upper()), 0)
-                        cant_idx = next((i for i, h in enumerate(headers) if "CANTIDAD" in str(h).upper() or "CANT" in str(h).upper()), -1)
-                        precio_idx = next((i for i, h in enumerate(headers) if "PRECIO" in str(h).upper()), -1)
-                        
-                        # Procesar filas
-                        for fila in tabla[1:]:  # Skip header
-                            if isinstance(fila, list) and len(fila) > desc_idx:
-                                descripcion = str(fila[desc_idx]).strip() if len(fila) > desc_idx else ""
-                                cantidad = str(fila[cant_idx]).strip() if cant_idx >= 0 and len(fila) > cant_idx else ""
-                                precio = str(fila[precio_idx]).strip() if precio_idx >= 0 and len(fila) > precio_idx else ""
-                                
-                                if descripcion and not descripcion.upper().startswith(("TOTAL", "SUBTOTAL")):
-                                    trabajos.append({
-                                        "descripcion": descripcion,
-                                        "cantidad": cantidad,
-                                        "precio": precio
-                                    })
-                                    print(f"✅ DEBUG: Trabajo estándar agregado: {descripcion} | {cantidad} | {precio}")
-                    
-                    # Buscar tabla con "DESCRIPCIÓN DE TRABAJOS" (formato específico)
-                    elif any("DESCRIPCIÓN DE TRABAJOS" in str(h).upper() for h in headers):
+                    # Buscar SOLO tabla con "DESCRIPCIÓN DE TRABAJOS" en el header
+                    if any("DESCRIPCIÓN DE TRABAJOS" in str(h).upper() for h in headers):
                         print(f"✅ DEBUG: Tabla de trabajos con 'DESCRIPCIÓN DE TRABAJOS' encontrada")
                         
                         # Encontrar índices de columnas
                         desc_idx = next((i for i, h in enumerate(headers) if "DESCRIPCIÓN DE TRABAJOS" in str(h).upper()), 0)
-                        cant_idx = next((i for i, h in enumerate(headers) if "CANTIDAD" in str(h).upper() or "CANT" in str(h).upper()), -1)
+                        # Buscar CANT o CANTIDAD
+                        cant_idx = next((i for i, h in enumerate(headers) if "CANT" in str(h).upper() and "CANTIDAD" not in str(h).upper()), -1)
+                        if cant_idx == -1:  # Si no encuentra CANT, buscar CANTIDAD
+                            cant_idx = next((i for i, h in enumerate(headers) if "CANTIDAD" in str(h).upper()), -1)
                         precio_idx = next((i for i, h in enumerate(headers) if "PRECIO" in str(h).upper()), -1)
                         
                         print(f"🔍 DEBUG: Índices - Descripción: {desc_idx}, Cantidad: {cant_idx}, Precio: {precio_idx}")
@@ -1055,8 +1207,7 @@ class AppState(rx.State):
                                 # Filtrar filas vacías o con texto de placeholder
                                 if (descripcion and 
                                     descripcion.lower() != "sin trabajos disponibles" and 
-                                    not descripcion.upper().startswith(("TOTAL", "SUBTOTAL")) and
-                                    not descripcion.upper().startswith(("FLIA", "FAMILIA"))):  # Evitar productos
+                                    not descripcion.upper().startswith(("TOTAL", "SUBTOTAL"))):
                                     
                                     trabajos.append({
                                         "descripcion": descripcion,
@@ -1065,41 +1216,39 @@ class AppState(rx.State):
                                     })
                                     print(f"✅ DEBUG: Trabajo agregado: {descripcion} | {cantidad} | {precio}")
                                 elif descripcion:
-                                    print(f"⚠️  DEBUG: Trabajo filtrado: '{descripcion}' (placeholder, total o producto)")
+                                    print(f"⚠️  DEBUG: Trabajo filtrado: '{descripcion}' (placeholder o total)")
                 
                 # Caso 2: Dict individual (formato de extracción de pdfplumber)
                 elif isinstance(tabla, dict):
                     print(f"🔍 DEBUG: Procesando dict: {tabla.keys()}")
                     
-                    # Solo procesar si es específicamente de trabajos, no de productos
-                    if "DESCRIPCIÓN DE TRABAJOS" in tabla.keys():
-                        descripcion, cantidad, precio = "", "", ""
+                    # Buscar claves relacionadas con trabajos
+                    descripcion, cantidad, precio = "", "", ""
+                    
+                    for key, value in tabla.items():
+                        key_upper = str(key).upper()
+                        value_str = str(value).strip()
                         
-                        for key, value in tabla.items():
-                            key_upper = str(key).upper()
-                            value_str = str(value).strip()
-                            
-                            if "DESCRIPCIÓN DE TRABAJOS" in key_upper:
-                                descripcion = value_str
-                            elif ("CANTIDAD" in key_upper or "CANT" in key_upper) and "PRECIO" not in key_upper:
-                                cantidad = value_str
-                            elif "PRECIO" in key_upper:
-                                precio = value_str
+                        if "DESCRIPCIÓN DE TRABAJOS" in key_upper:
+                            descripcion = value_str
+                        elif "CANT" in key_upper and "CANTIDAD" not in key_upper:  # Priorizar CANT sobre CANTIDAD
+                            cantidad = value_str
+                        elif "CANTIDAD" in key_upper and not cantidad:  # Solo si no se encontró CANT
+                            cantidad = value_str
+                        elif "PRECIO" in key_upper:
+                            precio = value_str
+                    
+                    # Solo agregar si tiene descripción válida y viene de trabajos
+                    if (descripcion and 
+                        descripcion.lower() != "sin trabajos disponibles" and
+                        not descripcion.upper().startswith(("TOTAL", "SUBTOTAL"))):
                         
-                        # Solo agregar si tiene descripción válida y no es descripción de productos
-                        if (descripcion and 
-                            descripcion.lower() != "sin trabajos disponibles" and
-                            not descripcion.upper().startswith(("TOTAL", "SUBTOTAL")) and
-                            not descripcion.upper().startswith(("FLIA", "FAMILIA"))):
-                            
-                            trabajos.append({
-                                "descripcion": descripcion,
-                                "cantidad": cantidad if cantidad else "N/A",
-                                "precio": precio if precio else "N/A"
-                            })
-                            print(f"✅ DEBUG: Trabajo de dict agregado: {descripcion} | {cantidad} | {precio}")
-                        elif descripcion:
-                            print(f"⚠️  DEBUG: Dict filtrado: '{descripcion[:50]}...' (es descripción de producto)")
+                        trabajos.append({
+                            "descripcion": descripcion,
+                            "cantidad": cantidad if cantidad else "N/A",
+                            "precio": precio if precio else "N/A"
+                        })
+                        print(f"✅ DEBUG: Trabajo de dict agregado: {descripcion} | {cantidad} | {precio}")
             
             print(f"🔍 DEBUG: Total trabajos encontrados: {len(trabajos)}")
             for i, trabajo in enumerate(trabajos):
@@ -1524,7 +1673,7 @@ class AppState(rx.State):
             traceback.print_exc()
 
     @rx.event(background=True)
-    async def get_cots(self):
+    async def get_cots(self, append_mode: bool = False):
         """Obtiene las cotizaciones."""
         try:
             async with self:
@@ -1548,10 +1697,19 @@ class AppState(rx.State):
                 if self.cots:
                     # Ordenar por número de cotización (año descendente, número descendente)
                     self.cots = sorted(self.cots, key=lambda cot: (int(cot.year) if cot.year.isdigit() else 0, int(cot.num) if cot.num.isdigit() else 0), reverse=True)
-                    self.cots_show = self.cots[:30]  # Mostrar solo las primeras 30 cotizaciones
-                    print(f"✅ {len(self.cots)} cotizaciones obtenidas correctamente y ordenadas por número, mostrando {len(self.cots_show)}")
+                    
+                    if append_mode:
+                        # Modo scroll infinito: agregar a los existentes
+                        print(f"📄 Modo scroll infinito: agregando {len(self.cots)} cotizaciones")
+                        self.cots_show.extend(self.cots)
+                    else:
+                        # Modo paginación: reiniciar y mostrar primera página
+                        self.cots_page = 0
+                        self.cots_show = self.cots[:30]  # Mostrar solo las primeras 30 cotizaciones
+                        print(f"✅ {len(self.cots)} cotizaciones obtenidas correctamente y ordenadas por número, mostrando {len(self.cots_show)}")
                 else:
-                    self.cots_show = []
+                    if not append_mode:
+                        self.cots_show = []
                     print("⚠️  No se encontraron cotizaciones")
 
         except Exception as e:

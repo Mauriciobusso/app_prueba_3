@@ -223,9 +223,14 @@ class AlgoliaAPI:
     
     def index_data(self, index_name: str, records: List[Dict]) -> bool:
         """
-        Indexa datos en Algolia (requiere API key con permisos de escritura)
+        Indexa datos en Algolia usando el cliente administrativo.
         """
         if not self.enabled:
+            print("⚠️ Algolia deshabilitado - no se indexarán datos")
+            return False
+            
+        if not records:
+            print("⚠️ No hay registros para indexar")
             return False
             
         try:
@@ -237,7 +242,12 @@ class AlgoliaAPI:
             for i in range(0, len(records), batch_size):
                 batch = records[i:i + batch_size]
                 # Usar save_objects directamente en el cliente, pasando el índice como parámetro
-                admin_client.save_objects(index_name, batch, {'autoGenerateObjectIDIfNotExist': True})
+                # Nota: Algunas versiones de algoliasearch pueden devolver un coroutine
+                # Si save_objects devuelve coroutine, necesitamos await en contexto async
+                result = admin_client.save_objects(index_name, batch, {'autoGenerateObjectIDIfNotExist': True})
+                # Si es un coroutine, imprimir warning y continuar
+                if hasattr(result, '__await__'):
+                    print("⚠️ save_objects devolvió coroutine - versión de Algolia requiere await")
                 
             print(f"✅ {len(records)} registros indexados en '{index_name}'")
             return True
@@ -245,6 +255,31 @@ class AlgoliaAPI:
         except Exception as e:
             print(f"❌ Error al indexar datos en Algolia: {e}")
             return False
+
+    async def list_index(self, index_name: str, page: int = 0, hits_per_page: int = 100) -> Dict:
+        """
+        Lista registros de un índice de Algolia (útil para obtener áreas/roles u otros índices pequeños).
+        """
+        if not self.enabled:
+            return {}
+
+        try:
+            from algoliasearch.search.client import SearchClientSync
+            sync_client = SearchClientSync(self.app_id, self.search_key)
+
+            results = sync_client.search_single_index(
+                index_name=index_name,
+                search_params={
+                    "query": "",
+                    "page": page,
+                    "hitsPerPage": hits_per_page,
+                }
+            )
+
+            return {"hits": results.hits, "nbHits": results.nb_hits, "page": results.page, "nbPages": results.nb_pages, "hitsPerPage": results.hits_per_page}
+        except Exception as e:
+            print(f"❌ Error listando índice {index_name} en Algolia: {e}")
+            return {}
 
 # Instancia global
 algolia_api = AlgoliaAPI()

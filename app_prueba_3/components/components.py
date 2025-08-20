@@ -334,11 +334,18 @@ def table_familias():
 def table_cotizaciones():
     """Tabla de cotizaciones con componentes reutilizables"""
     return rx.vstack(
-        search_bar_component(
+        rx.hstack(
+            search_bar_component(
             placeholder="Buscar cotizaciones...",
             search_term=AppState.search_text,
             on_change=AppState.set_search_text,
             on_search=AppState.execute_search
+            ),
+            rx.link(
+                rx.button("Nueva Cotización", background=Color.PRIMARY_BLUE.value, color=Color.WHITE.value),
+                href="/cotizaciones/new"
+            ),
+            spacing="4",
         ),
         rx.table.root(
             rx.table.header(
@@ -455,4 +462,137 @@ def table_cotizaciones():
             style={"table_layout": "fixed"},
         ),
         width="100%",
+    )
+
+def pagination_controls():
+    """Controles de paginación para cotizaciones"""
+    return rx.vstack(
+        # Información de página
+        rx.text(
+            AppState.cots_page_info,
+            size="2",
+            color="gray",
+            text_align="center",
+        ),
+        
+        # Controles de navegación
+        rx.hstack(
+            # Botón primera página
+            rx.button(
+                rx.icon("chevrons-left", size=16),
+                size="2",
+                variant="outline",
+                disabled=~AppState.cots_has_prev_page,
+                on_click=AppState.first_cots_page,
+                style={
+                    "min_width": "40px",
+                    "background_color": "var(--color-surface)",
+                    "border": "1px solid var(--accent-7)",
+                    "color": "var(--accent-11)",
+                    "_hover": {
+                        "background_color": "var(--accent-3)",
+                    },
+                    "_disabled": {
+                        "opacity": "0.5",
+                        "cursor": "not-allowed",
+                    }
+                }
+            ),
+            
+            # Botón página anterior
+            rx.button(
+                rx.icon("chevron-left", size=16),
+                size="2",
+                variant="outline",
+                disabled=~AppState.cots_has_prev_page,
+                on_click=AppState.prev_cots_page,
+                style={
+                    "min_width": "40px",
+                    "background_color": "var(--color-surface)",
+                    "border": "1px solid var(--accent-7)",
+                    "color": "var(--accent-11)",
+                    "_hover": {
+                        "background_color": "var(--accent-3)",
+                    },
+                    "_disabled": {
+                        "opacity": "0.5",
+                        "cursor": "not-allowed",
+                    }
+                }
+            ),
+            
+            # Información de página actual
+            rx.box(
+                rx.text(
+                    f"Página {AppState.cots_current_page_display} de {AppState.cots_total_pages}",
+                    size="2",
+                    weight="medium",
+                    color="var(--accent-11)",
+                ),
+                padding_x="4",
+                padding_y="2",
+                border_radius="6px",
+                background_color="var(--accent-3)",
+                border="1px solid var(--accent-7)",
+            ),
+            
+            # Botón página siguiente
+            rx.button(
+                rx.icon("chevron-right", size=16),
+                size="2",
+                variant="outline",
+                disabled=~AppState.cots_has_next_page,
+                on_click=AppState.next_cots_page,
+                style={
+                    "min_width": "40px",
+                    "background_color": "var(--color-surface)",
+                    "border": "1px solid var(--accent-7)",
+                    "color": "var(--accent-11)",
+                    "_hover": {
+                        "background_color": "var(--accent-3)",
+                    },
+                    "_disabled": {
+                        "opacity": "0.5",
+                        "cursor": "not-allowed",
+                    }
+                }
+            ),
+            
+            # Botón última página
+            rx.button(
+                rx.icon("chevrons-right", size=16),
+                size="2",
+                variant="outline",
+                disabled=~AppState.cots_has_next_page,
+                on_click=AppState.last_cots_page,
+                style={
+                    "min_width": "40px",
+                    "background_color": "var(--color-surface)",
+                    "border": "1px solid var(--accent-7)",
+                    "color": "var(--accent-11)",
+                    "_hover": {
+                        "background_color": "var(--accent-3)",
+                    },
+                    "_disabled": {
+                        "opacity": "0.5",
+                        "cursor": "not-allowed",
+                    }
+                }
+            ),
+            
+            spacing="2",
+            justify="center",
+            align="center",
+        ),
+        
+        spacing="3",
+        align="center",
+        justify="center",
+        width="100%",
+        padding="4",
+        style={
+            "background_color": "var(--color-surface)",
+            "border_top": "1px solid var(--accent-7)",
+            "margin_top": "20px",
+        }
     )

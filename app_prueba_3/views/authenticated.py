@@ -1,6 +1,6 @@
 import reflex as rx
 from ..views.navbar import navbar
-from ..components.components import table_certificados, table_familias, table_cotizaciones, session_keepalive, loading_spinner, loading_overlay
+from ..components.components import table_certificados, table_familias, table_cotizaciones, session_keepalive, loading_spinner, loading_overlay, pagination_controls
 from ..backend.app_state import AppState
 from ..styles.colors import Color
 from ..styles.style import container_style
@@ -56,7 +56,7 @@ def certificados_view() -> rx.Component:
         width="100%",
         height="100vh",
         background_color="var(--color-background)",
-        on_scroll=lambda: AppState.on_scroll_throttled(),
+    on_scroll=AppState.update_activity,
         on_mount=AppState.on_mount_certificados,
     )
 
@@ -110,7 +110,7 @@ def familias_view() -> rx.Component:
         width="100%",
         height="100vh",
         background_color="var(--color-background)",
-        on_scroll=lambda: AppState.on_scroll_throttled(),
+    on_scroll=AppState.update_activity,
         on_mount=AppState.on_mount_familias,
     )
 
@@ -152,7 +152,17 @@ def cotizaciones_view() -> rx.Component:
                         ),
                         padding="60px",
                     ),
-                    table_cotizaciones(),
+                    rx.vstack(
+                        table_cotizaciones(),
+                        # Controles de paginación - Solo mostrar si hay cotizaciones
+                        rx.cond(
+                            AppState.cots.length() > 0,
+                            pagination_controls(),
+                            rx.fragment()
+                        ),
+                        spacing="4",
+                        width="100%",
+                    ),
                 ),
                 spacing="6",
                 width="100%",
@@ -164,7 +174,7 @@ def cotizaciones_view() -> rx.Component:
         width="100%",
         height="100vh",
         background_color="var(--color-background)",
-        on_scroll=lambda: AppState.on_scroll_throttled(),
+    on_scroll=AppState.update_activity,
         on_mount=AppState.on_mount_cotizaciones,
     )
 
@@ -172,6 +182,11 @@ def cotizaciones_view() -> rx.Component:
 def cotizacion_detalle_view() -> rx.Component:
     """Vista de detalle de una cotización específica - Estilo Bureau Veritas"""
     return rx.box(
+        # Overlay de carga para cotización detalle
+        loading_overlay(
+            "Cargando cotización...",
+            AppState.is_loading_cotizacion_detalle
+        ),
         navbar(title="Detalle de Cotización"),
         rx.box(
             rx.vstack(
@@ -195,9 +210,9 @@ def cotizacion_detalle_view() -> rx.Component:
                     href="/cotizaciones"
                 ),
                 
-                # Tarjeta con detalles de la cotización
+                # Tarjeta con detalles de la cotización - Solo mostrar cuando NO esté cargando Y tenga datos
                 rx.cond(
-                    AppState.cotizacion_detalle.id != "",
+                    (AppState.cotizacion_detalle.id != "") & (~AppState.is_loading_cotizacion_detalle),
                     rx.card(
                         rx.vstack(
                             # Título
@@ -275,7 +290,7 @@ def cotizacion_detalle_view() -> rx.Component:
                                     "Reprocesar PDF",
                                     variant="outline",
                                     size="3",
-                                    on_click=AppState.extraer_pdf_cotizacion_detalle,
+                                    on_click=AppState.reprocesar_cotizacion_detalle,
                                     style={
                                         "border": "1px solid var(--accent-7)",
                                         "color": "var(--accent-11)",
@@ -404,9 +419,9 @@ def cotizacion_detalle_view() -> rx.Component:
                                             style={"padding": "6px 10px", "border_bottom": "1px solid var(--gray-6)"}
                                         )
                                     ),
-                                    # Fallback: usar familias mapeadas
+                                    # Fallback: usar familias mapeadas - Solo mostrar cuando NO esté cargando
                                     rx.cond(
-                                        AppState.cotizacion_detalle_familys_count > 0,
+                                        (AppState.cotizacion_detalle_familys_count > 0) & (~AppState.is_loading_cotizacion_detalle),
                                         rx.foreach(
                                             AppState.cotizacion_detalle.familys,
                                             lambda f: rx.text(
@@ -439,10 +454,10 @@ def cotizacion_detalle_view() -> rx.Component:
                                 padding_y="8px",
                                 style={"border": "1px solid var(--gray-7)", "background": "var(--gray-3)", "padding_left": "10px", "padding_right": "10px"}
                             ),
-                            # Tabla de trabajos extraídos del PDF
+                            # Tabla de trabajos extraídos del PDF - Solo mostrar cuando NO esté cargando
                             rx.vstack(
                                 rx.cond(
-                                    AppState.cotizacion_detalle_trabajos_count > 0,
+                                    (AppState.cotizacion_detalle_trabajos_count > 0) & (~AppState.is_loading_cotizacion_detalle),
                                     rx.foreach(
                                         AppState.cotizacion_detalle_descripcion_trabajos,
                                         lambda t: rx.hstack(
@@ -551,5 +566,89 @@ def cotizacion_detalle_view() -> rx.Component:
         overflow_y="auto",
         width="100%",
         height="100vh",
-        background_color="var(--color-background)"
+        background_color="var(--color-background)",
+        on_mount=AppState.on_mount_cotizacion_detalle
     )                  
+
+
+def cotizacion_new_view() -> rx.Component:
+    """Vista para crear una nueva cotización desde un formulario simple."""
+    from ..backend.app_state import AppState
+    import json
+
+    return rx.box(
+        navbar(title="Nueva Cotización"),
+        rx.box(
+            rx.vstack(
+                rx.heading("Crear nueva cotización", size="5"),
+
+                # Form fields bound to AppState
+                rx.input(placeholder="Número (opcional)", value=AppState.new_cot_number, on_change=AppState.set_new_cot_number),
+                rx.input(placeholder="Fecha (YYYY-MM-DD)", value=AppState.new_cot_issuedate, on_change=AppState.set_new_cot_issuedate),
+                rx.input(placeholder="Empresa / Razón social", value=AppState.new_cot_razonsocial, on_change=AppState.set_new_cot_razonsocial),
+                rx.input(placeholder="At Sr./Sra.", value=AppState.new_cot_nombre, on_change=AppState.set_new_cot_nombre),
+                rx.input(placeholder="Consultora", value=AppState.new_cot_consultora, on_change=AppState.set_new_cot_consultora),
+                rx.input(placeholder="Facturar a", value=AppState.new_cot_facturar, on_change=AppState.set_new_cot_facturar),
+                rx.input(placeholder="Mail Receptor", value=AppState.new_cot_mail, on_change=AppState.set_new_cot_mail),
+
+                # Familias editor
+                rx.hstack(
+                    rx.heading("Familias", size="6"),
+                    rx.button("Agregar familia", on_click=AppState.add_new_cot_family, variant="outline"),
+                    spacing="4",
+                ),
+                rx.vstack(
+                    rx.foreach(
+                        AppState.new_cot_familias,
+                        lambda fam, idx: rx.hstack(
+                            rx.input(value=fam, on_change=lambda v, i=idx: AppState.set_new_cot_family(i, v)),
+                            rx.button("Eliminar", on_click=lambda i=idx: AppState.remove_new_cot_family(i), variant="ghost"),
+                            spacing="2",
+                        )
+                    )
+                ),
+
+                # Trabajos editor
+                rx.hstack(
+                    rx.heading("Trabajos", size="6"),
+                    rx.button("Agregar trabajo", on_click=AppState.add_new_cot_trabajo, variant="outline"),
+                    spacing="4",
+                ),
+                rx.vstack(
+                    rx.foreach(
+                        AppState.new_cot_trabajos,
+                        lambda trabajo, idx: rx.hstack(
+                            rx.input(value=trabajo.get('descripcion',''), placeholder='Descripcion', on_change=lambda v, i=idx: AppState.set_new_cot_trabajo_field(i, 'descripcion', v)),
+                            rx.input(value=trabajo.get('cantidad',''), placeholder='Cantidad', on_change=lambda v, i=idx: AppState.set_new_cot_trabajo_field(i, 'cantidad', v), width='120px'),
+                            rx.input(value=trabajo.get('descuento',''), placeholder='Descuento', on_change=lambda v, i=idx: AppState.set_new_cot_trabajo_field(i, 'descuento', v), width='120px'),
+                            rx.input(value=trabajo.get('precio',''), placeholder='Precio', on_change=lambda v, i=idx: AppState.set_new_cot_trabajo_field(i, 'precio', v), width='120px'),
+                            rx.button("Eliminar", on_click=lambda i=idx: AppState.remove_new_cot_trabajo(i), variant='ghost'),
+                            spacing='2',
+                        )
+                    )
+                ),
+
+                # Validation / status
+                rx.cond(
+                    AppState.new_cot_status == 'error',
+                    rx.text(AppState.new_cot_error_message, color='red'),
+                    rx.cond(AppState.new_cot_status == 'success', rx.text('Cotización creada', color='green'), rx.fragment())
+                ),
+
+                rx.hstack(
+                    rx.button("Crear", on_click=AppState.submit_new_cot, background=Color.PRIMARY_BLUE.value, color=Color.WHITE.value),
+                    rx.link(rx.button("Cancelar", variant="outline"), href="/cotizaciones"),
+                    spacing="3",
+                ),
+
+                spacing="6",
+                width="100%",
+            ),
+            style=container_style,
+            padding_top="84px",
+        ),
+        overflow_y="auto",
+        width="100%",
+        height="100vh",
+        background_color="var(--color-background)",
+    )

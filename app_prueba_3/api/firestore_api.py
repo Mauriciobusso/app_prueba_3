@@ -7,6 +7,7 @@ from google.cloud.firestore_v1 import FieldFilter
 import asyncio
 from threading import Thread, Lock
 from ..utils import User, Fam, Cot, Certs, Model, Client, completar_con_ceros
+from .algolia_api import algolia_api
 
 class FirestoreAPI:
     def __init__(self):
@@ -461,6 +462,550 @@ class FirestoreAPI:
             import traceback
             traceback.print_exc()
             return []
+
+    # Métodos para manejar cotizaciones detalle (información extraída)
+    def save_cotizacion_detalle(
+        self,
+        cotizacion_id: str,
+        client_data: dict,
+        familias: list,
+        trabajos: list,
+        productos: list = None,
+        metadata: dict = None,
+        tables: list = None,
+        condiciones: Union[str, None] = None
+    ) -> bool:
+        """
+        Guarda la información extraída de una cotización en Firestore.
+        
+        Args:
+            cotizacion_id (str): ID de la cotización
+            client_data (dict): Información del cliente
+            familias (list): Lista de familias extraídas
+            trabajos (list): Lista de trabajos extraídos
+            productos (list): Lista de productos extraídos (opcional)
+            metadata (dict): Metadatos adicionales (fecha de procesamiento, etc.)
+        
+        Returns:
+            bool: True si se guardó exitosamente, False en caso contrario
+        """
+        if not self.firebase_initialized:
+            print("⚠️  Firebase no inicializado. No se puede guardar cotización detalle.")
+            return False
+        
+        try:
+            # Preparar los datos para guardar
+            # Sanitizar 'tables' para evitar arrays anidados (Firestore no permite arrays dentro de arrays)
+            sanitized_tables = tables
+            if isinstance(tables, list) and any(isinstance(el, list) for el in tables):
+                # Convertir cada fila (lista) en un objeto para evitar arrays anidados
+                sanitized_tables = [{"row": el} for el in tables]
+
+            detalle_data = {
+                "cotizacion_id": cotizacion_id,
+                "client": client_data,
+                "familias": familias or [],
+                "trabajos": trabajos or [],
+                "productos": productos or [],
+                # Campos adicionales solicitados
+                "metadata": metadata or {},
+                "tables": sanitized_tables or [],
+                "condiciones": condiciones or "",
+                "fecha_procesamiento": firestore.SERVER_TIMESTAMP,
+                "version": "1.0"
+            }
+
+            # Guardar dentro del documento existente de la colección 'cotizaciones'
+            try:
+                cot_ref = self.db.collection("cotizaciones").document(cotizacion_id)
+                # Guardar el detalle como subcampo para no romper el schema principal
+                cot_ref.set({"detalle": detalle_data}, merge=True)
+                # Además, asegurar que los campos principales solicitados estén en el doc de cotización
+                try:
+                    top_update = {}
+                    # Fecha
+                    fecha = detalle_data.get('metadata', {}).get('fecha') or detalle_data.get('metadata', {}).get('issuedate')
+                    if fecha:
+                        top_update['issuedate'] = fecha
+                    # Empresa / Razón social
+                    empresa = detalle_data.get('client', {}).get('razonsocial') or detalle_data.get('client', {}).get('name')
+                    if empresa:
+                        top_update['razonsocial'] = empresa
+                    # At (nombre)
+                    at = detalle_data.get('metadata', {}).get('dirigido_a') or detalle_data.get('metadata', {}).get('at')
+                    if at:
+                        top_update['nombre'] = at
+                    # Consultora
+                    consultora = detalle_data.get('metadata', {}).get('consultora') or detalle_data.get('client', {}).get('consultora')
+                    if consultora:
+                        top_update['consultora'] = consultora
+                    # Facturar a
+                    facturar = detalle_data.get('metadata', {}).get('facturar') or detalle_data.get('client', {}).get('facturar')
+                    if facturar:
+                        top_update['facturar'] = facturar
+                    # Mail receptor
+                    mail_receptor = detalle_data.get('metadata', {}).get('mail_receptor') or detalle_data.get('client', {}).get('email_cotizacion') or detalle_data.get('condiciones', '')
+                    if mail_receptor:
+                        top_update['mail'] = mail_receptor
+                    # Familias y trabajos (guardar versiones simplificadas)
+                    familias_top = []
+                    for f in detalle_data.get('familias', []) or []:
+                        if isinstance(f, dict):
+                            familias_top.append({
+                                'id': f.get('id', ''),
+                                'family': f.get('family', ''),
+                                'product': f.get('product', '')
+                            })
+                        else:
+                            familias_top.append({'value': str(f)})
+                    if familias_top:
+                        top_update['familias'] = familias_top
+
+                    trabajos_top = []
+                    for t in detalle_data.get('trabajos', []) or []:
+                        if isinstance(t, dict):
+                            trabajos_top.append({
+                                'descripcion': t.get('descripcion') or t.get('Descripcion') or t.get('desc', ''),
+                                'cantidad': t.get('cantidad', 0),
+                                'descuento': t.get('descuento', 0),
+                                'precio': t.get('precio', 0)
+                            })
+                        else:
+                            trabajos_top.append({'descripcion': str(t)})
+                    if trabajos_top:
+                        top_update['trabajos'] = trabajos_top
+
+                    if top_update:
+                        cot_ref.set(top_update, merge=True)
+                except Exception as e_top:
+                    print(f"⚠️ Error actualizando campos principales de cotización: {e_top}")
+                print(f"✅ Cotización detalle guardada dentro de cotizaciones/{cotizacion_id}")
+                # Indexar en Algolia para búsquedas rápidas (si está configurado)
+                try:
+                    if algolia_api and getattr(algolia_api, 'enabled', False):
+                        # Construir registro mínimo para Algolia combinando cot info + detalle
+                        cot_doc = cot_ref.get()
+                        cot_top = cot_doc.to_dict() if cot_doc.exists else {}
+                        # Priorizar campos del doc top-level, si existen
+                        fecha = (cot_top.get('issuedate') or detalle_data.get('metadata', {}).get('issuedate') or detalle_data.get('metadata', {}).get('fecha') or '')
+                        numero = (str(cot_top.get('number') or detalle_data.get('metadata', {}).get('numero_cotizacion') or detalle_data.get('metadata', {}).get('number', '')))
+                        empresa = (cot_top.get('razonsocial') or detalle_data.get('client', {}).get('razonsocial') or detalle_data.get('client', {}).get('name') or '')
+                        at = detalle_data.get('metadata', {}).get('at', detalle_data.get('metadata', {}).get('nombre', ''))
+                        consultora = cot_top.get('consultora') or detalle_data.get('client', {}).get('consultora') or detalle_data.get('metadata', {}).get('consultora', '')
+                        facturar = cot_top.get('facturar') or detalle_data.get('metadata', {}).get('facturar', '')
+                        mail_receptor = cot_top.get('mail') or detalle_data.get('metadata', {}).get('mail_receptor') or detalle_data.get('client', {}).get('email_cotizacion', '')
+
+                        familias_list = []
+                        try:
+                            for f in detalle_data.get('familias', []):
+                                if isinstance(f, dict):
+                                    familias_list.append(f.get('family') or f.get('product') or f.get('razonsocial') or f.get('id') or str(f))
+                                else:
+                                    familias_list.append(str(f))
+                        except Exception:
+                            familias_list = []
+
+                        trabajos_list = []
+                        try:
+                            for t in detalle_data.get('trabajos', []):
+                                if isinstance(t, dict):
+                                    trabajos_list.append({
+                                        'descripcion': t.get('descripcion') or t.get('Descripcion') or t.get('desc') or t.get('description',''),
+                                        'cantidad': t.get('cantidad') or t.get('qty') or t.get('cantidad', 0),
+                                        'descuento': t.get('descuento') or t.get('discount') or 0,
+                                        'precio': t.get('precio') or t.get('price') or t.get('unit_price') or 0
+                                    })
+                                else:
+                                    trabajos_list.append({'descripcion': str(t)})
+                        except Exception:
+                            trabajos_list = []
+
+                        algolia_record = {
+                            'objectID': f"cot_{cotizacion_id}",
+                            'id': cotizacion_id,
+                            'num': numero,
+                            'fecha': fecha,
+                            'empresa': empresa,
+                            'at': at,
+                            'consultora': consultora,
+                            'facturar': facturar,
+                            'mail_receptor': mail_receptor,
+                            'familias': familias_list,
+                            'trabajos': trabajos_list,
+                            'type': 'cotizacion'
+                        }
+                        algolia_api.index_data('cotizaciones', [algolia_record])
+                except Exception as e:
+                    print(f"⚠️ Error indexando cotización en Algolia: {e}")
+                return True
+            except Exception:
+                # Fallback: si por alguna razón no existe la colección/doc o hay permisos, crear colección separada
+                doc_ref = self.db.collection("cotizaciones_detalle").document(cotizacion_id)
+                doc_ref.set(detalle_data, merge=True)
+                print(f"⚠️  Fallback: Cotización detalle guardada en cotizaciones_detalle/{cotizacion_id}")
+                # Intentar indexar también en Algolia con la información disponible
+                try:
+                    if algolia_api and getattr(algolia_api, 'enabled', False):
+                        algolia_record = {
+                            'objectID': f"cot_{cotizacion_id}",
+                            'id': cotizacion_id,
+                            'num': detalle_data.get('metadata', {}).get('numero_cotizacion', ''),
+                            'fecha': detalle_data.get('metadata', {}).get('issuedate', ''),
+                            'empresa': detalle_data.get('client', {}).get('razonsocial', ''),
+                            'at': detalle_data.get('metadata', {}).get('at', ''),
+                            'consultora': detalle_data.get('client', {}).get('consultora', ''),
+                            'facturar': detalle_data.get('metadata', {}).get('facturar', ''),
+                            'mail_receptor': detalle_data.get('metadata', {}).get('mail_receptor', ''),
+                            'familias': [f.get('family', '') if isinstance(f, dict) else str(f) for f in detalle_data.get('familias', [])],
+                            'trabajos': [{
+                                'descripcion': t.get('descripcion') or t.get('Descripcion', ''),
+                                'cantidad': t.get('cantidad', 0),
+                                'descuento': t.get('descuento', 0),
+                                'precio': t.get('precio', 0),
+                            } if isinstance(t, dict) else {'descripcion': str(t)} for t in detalle_data.get('trabajos', [])],
+                            'type': 'cotizacion'
+                        }
+                        algolia_api.index_data('cotizaciones', [algolia_record])
+                except Exception as e:
+                    print(f"⚠️ Error indexando cotización (fallback) en Algolia: {e}")
+                return True
+            
+        except Exception as e:
+            print(f"❌ Error al guardar cotización detalle: {e}")
+            return False
+    
+    def get_cotizacion_detalle(self, cotizacion_id: str) -> dict:
+        """
+        Obtiene la información extraída de una cotización desde Firestore.
+        
+        Args:
+            cotizacion_id (str): ID de la cotización
+        
+        Returns:
+            dict: Información de la cotización detalle o None si no existe
+        """
+        if not self.firebase_initialized:
+            print("⚠️  Firebase no inicializado. Retornando None.")
+            return None
+        
+        try:
+            # Primero intentar leer el detalle dentro del documento de 'cotizaciones'
+            cot_ref = self.db.collection("cotizaciones").document(cotizacion_id)
+            cot_doc = cot_ref.get()
+            if cot_doc.exists:
+                cot_data = cot_doc.to_dict()
+                if "detalle" in cot_data:
+                    print(f"✅ Cotización detalle encontrada dentro de cotizaciones/{cotizacion_id}")
+                    return cot_data.get("detalle")
+
+            # Fallback: leer de la colección legacy 'cotizaciones_detalle'
+            doc_ref = self.db.collection("cotizaciones_detalle").document(cotizacion_id)
+            doc = doc_ref.get()
+            if doc.exists:
+                data = doc.to_dict()
+                print(f"✅ Cotización detalle encontrada en cotizaciones_detalle/{cotizacion_id}")
+                return data
+            else:
+                print(f"📋 No existe cotización detalle para: {cotizacion_id}")
+                return None
+                
+        except Exception as e:
+            print(f"❌ Error al obtener cotización detalle: {e}")
+            return None
+    
+    def cotizacion_detalle_exists(self, cotizacion_id: str) -> bool:
+        """
+        Verifica si ya existe información extraída para una cotización.
+        
+        Args:
+            cotizacion_id (str): ID de la cotización
+        
+        Returns:
+            bool: True si existe, False en caso contrario
+        """
+        if not self.firebase_initialized:
+            return False
+        
+        try:
+            # Verificar primero en la colección principal 'cotizaciones' (campo 'detalle')
+            cot_ref = self.db.collection("cotizaciones").document(cotizacion_id)
+            cot_doc = cot_ref.get()
+            if cot_doc.exists and "detalle" in cot_doc.to_dict():
+                return True
+
+            # Fallback: verificar en la colección legacy
+            doc_ref = self.db.collection("cotizaciones_detalle").document(cotizacion_id)
+            doc = doc_ref.get()
+            return doc.exists
+        except Exception as e:
+            print(f"❌ Error al verificar cotización detalle: {e}")
+            return False
+    
+    def delete_cotizacion_detalle(self, cotizacion_id: str) -> bool:
+        """
+        Elimina la información extraída de una cotización.
+        
+        Args:
+            cotizacion_id (str): ID de la cotización
+        
+        Returns:
+            bool: True si se eliminó exitosamente, False en caso contrario
+        """
+        if not self.firebase_initialized:
+            print("⚠️  Firebase no inicializado. No se puede eliminar.")
+            return False
+        
+        try:
+            # Intentar eliminar el campo 'detalle' dentro del documento de 'cotizaciones'
+            cot_ref = self.db.collection("cotizaciones").document(cotizacion_id)
+            try:
+                # Usar update con DELETE_FIELD para eliminar solo el subcampo
+                cot_ref.update({"detalle": firestore.DELETE_FIELD})
+                print(f"✅ Campo 'detalle' eliminado de cotizaciones/{cotizacion_id}")
+                return True
+            except Exception:
+                # Fallback: eliminar documento en la colección legacy
+                doc_ref = self.db.collection("cotizaciones_detalle").document(cotizacion_id)
+                doc_ref.delete()
+                print(f"⚠️  Fallback: Documento eliminado en cotizaciones_detalle/{cotizacion_id}")
+                return True
+        except Exception as e:
+            print(f"❌ Error al eliminar cotización detalle: {e}")
+            return False
+
+    # Métodos para plantillas de trabajos y precarga
+    def save_trabajo_template(
+        self,
+        client_id: str,
+        area: str,
+        trabajo_data: dict,
+        template_name: str = "default"
+    ) -> bool:
+        """
+        Guarda una plantilla de trabajo para un cliente específico.
+        
+        Args:
+            client_id (str): ID del cliente
+            area (str): Área del trabajo
+            trabajo_data (dict): Datos del trabajo (descripción, precio, etc.)
+            template_name (str): Nombre de la plantilla
+        
+        Returns:
+            bool: True si se guardó exitosamente
+        """
+        if not self.firebase_initialized:
+            print("⚠️  Firebase no inicializado. No se puede guardar plantilla.")
+            return False
+        
+        try:
+            template_data = {
+                "client_id": client_id,
+                "area": area,
+                "template_name": template_name,
+                "trabajo": trabajo_data,
+                "fecha_creacion": firestore.SERVER_TIMESTAMP,
+                "fecha_actualizacion": firestore.SERVER_TIMESTAMP,
+                "activo": True
+            }
+            
+            # Usar combinación de client_id, area y template_name como ID
+            doc_id = f"{client_id}_{area}_{template_name}"
+            doc_ref = self.db.collection("trabajos_templates").document(doc_id)
+            doc_ref.set(template_data, merge=True)
+            
+            print(f"✅ Plantilla de trabajo guardada: {doc_id}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error al guardar plantilla de trabajo: {e}")
+            return False
+    
+    def get_trabajos_templates(self, client_id: str, area: str = None) -> list:
+        """
+        Obtiene las plantillas de trabajo para un cliente.
+        
+        Args:
+            client_id (str): ID del cliente
+            area (str): Área específica (opcional)
+        
+        Returns:
+            list: Lista de plantillas de trabajo
+        """
+        if not self.firebase_initialized:
+            print("⚠️  Firebase no inicializado. Retornando lista vacía.")
+            return []
+        
+        try:
+            query = self.db.collection("trabajos_templates").where("client_id", "==", client_id)
+            
+            if area:
+                query = query.where("area", "==", area)
+            
+            query = query.where("activo", "==", True)
+            
+            docs = query.get()
+            templates = []
+            
+            for doc in docs:
+                data = doc.to_dict()
+                data["id"] = doc.id
+                templates.append(data)
+            
+            print(f"✅ {len(templates)} plantillas encontradas para cliente: {client_id}")
+            return templates
+            
+        except Exception as e:
+            print(f"❌ Error al obtener plantillas de trabajo: {e}")
+            return []
+    
+    def get_next_cotizacion_number(self, area: str, year: str = None) -> dict:
+        """
+        Obtiene el siguiente número de cotización para un área específica.
+        
+        Args:
+            area (str): ID del área
+            year (str): Año (formato YY), si no se especifica usa el año actual
+        
+        Returns:
+            dict: {"number": str, "year": str, "formatted": "NNNN/YY"}
+        """
+        if not self.firebase_initialized:
+            print("⚠️  Firebase no inicializado. Retornando número por defecto.")
+            return {"number": "0001", "year": "25", "formatted": "0001/25"}
+        
+        try:
+            from datetime import datetime
+            
+            # Usar año actual si no se especifica
+            if not year:
+                current_year = datetime.now().year
+                year = str(current_year)[-2:]  # Últimos 2 dígitos del año
+            
+            # Obtener la última cotización del área y año
+            query = (self.db.collection("cotizaciones")
+                    .where("area", "==", area)
+                    .where("year", "==", year)
+                    .order_by("number", direction=firestore.Query.DESCENDING)
+                    .limit(1))
+            
+            docs = list(query.get())
+            
+            if docs:
+                last_doc = docs[0].to_dict()
+                last_number = int(last_doc.get("number", 0))
+                next_number = last_number + 1
+            else:
+                next_number = 1
+            
+            # Formatear con ceros a la izquierda
+            formatted_number = str(next_number).zfill(4)
+            formatted_full = f"{formatted_number}/{year}"
+            
+            print(f"✅ Siguiente número de cotización: {formatted_full}")
+            
+            return {
+                "number": formatted_number,
+                "year": year,
+                "formatted": formatted_full
+            }
+            
+        except Exception as e:
+            print(f"❌ Error al obtener siguiente número de cotización: {e}")
+            # Retornar número por defecto en caso de error
+            return {"number": "0001", "year": year or "25", "formatted": f"0001/{year or '25'}"}
+    
+    def create_cotizacion_from_template(
+        self,
+        client_id: str,
+        area: str,
+        trabajos_templates: list,
+        metadata: dict = None
+    ) -> str:
+        """
+        Crea una nueva cotización usando plantillas de trabajo.
+        
+        Args:
+            client_id (str): ID del cliente
+            area (str): Área de la cotización
+            trabajos_templates (list): Lista de IDs de plantillas de trabajo a incluir
+            metadata (dict): Metadatos adicionales
+        
+        Returns:
+            str: ID de la cotización creada o None si falló
+        """
+        if not self.firebase_initialized:
+            print("⚠️  Firebase no inicializado. No se puede crear cotización.")
+            return None
+        
+        try:
+            # Obtener siguiente número
+            next_info = self.get_next_cotizacion_number(area)
+            
+            # Obtener datos del cliente
+            client_doc = self.db.collection("clientes").document(client_id).get()
+            if not client_doc.exists:
+                print(f"❌ Cliente no encontrado: {client_id}")
+                return None
+            
+            client_data = client_doc.to_dict()
+            
+            # Preparar datos de la cotización
+            from datetime import datetime
+            now = datetime.now()
+            
+            cotizacion_data = {
+                "number": next_info["number"],
+                "year": next_info["year"],
+                "area": area,
+                "client": client_id,
+                "razonsocial": client_data.get("razonsocial", ""),
+                "estado": "BORRADOR",
+                "issuedate": now.strftime("%Y-%m-%d"),
+                "issuedate_timestamp": now.timestamp(),
+                "fecha_creacion": firestore.SERVER_TIMESTAMP,
+                "creado_desde_template": True,
+                "templates_usados": trabajos_templates,
+                # Campos solicitados por el usuario
+                "metadata": metadata or {},
+                "empresa": client_data.get("razonsocial", ""),
+                "at": client_data.get("contacto", ""),
+                "consultora": client_data.get("consultora", ""),
+                "facturar": client_data.get("facturar", ""),
+                "mail_receptor": client_data.get("email_cotizacion", ""),
+                "familias": [],
+                "trabajos": []
+            }
+            
+            # Crear la cotización
+            doc_ref = self.db.collection("cotizaciones").add(cotizacion_data)
+            cotizacion_id = doc_ref[1].id
+            
+            print(f"✅ Cotización creada desde template: {next_info['formatted']} (ID: {cotizacion_id})")
+            # Indexar en Algolia el registro básico de la cotización
+            try:
+                if algolia_api and getattr(algolia_api, 'enabled', False):
+                    algolia_record = {
+                        'objectID': f"cot_{cotizacion_id}",
+                        'id': cotizacion_id,
+                        'num': next_info['number'],
+                        'fecha': cotizacion_data.get('issuedate', ''),
+                        'empresa': cotizacion_data.get('empresa', ''),
+                        'at': cotizacion_data.get('at', ''),
+                        'consultora': cotizacion_data.get('consultora', ''),
+                        'facturar': cotizacion_data.get('facturar', ''),
+                        'mail_receptor': cotizacion_data.get('mail_receptor', ''),
+                        'familias': [],
+                        'trabajos': [],
+                        'type': 'cotizacion'
+                    }
+                    algolia_api.index_data('cotizaciones', [algolia_record])
+            except Exception as e:
+                print(f"⚠️ Error indexando cotización recién creada en Algolia: {e}")
+            return cotizacion_id
+            
+        except Exception as e:
+            print(f"❌ Error al crear cotización desde template: {e}")
+            return None
         
     def get_collection_data(
         self,

@@ -83,6 +83,11 @@ class Cot(rx.Base):
     pdf_condiciones: str = ""
     pdf_familias: list[dict] = []
     pdf_familias_validacion: dict = {}
+    # Datos procesados y listos para usar
+    trabajos: list = []
+    productos: list = []
+    # Control de cache para evitar reprocesamiento
+    loaded_from_cache: bool = False
 
 class Certs(rx.Base):
     """Values for Certs"""
