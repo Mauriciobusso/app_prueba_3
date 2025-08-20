@@ -33,12 +33,18 @@ class AppState(rx.State):
         """Extrae los datos del PDF de la cotización seleccionada y los guarda en el estado como string."""
         from app_prueba_3.api.cotizacion_extractor import get_cotizacion_full_data_from_drive
         import json, re
+        
+        # Marcar como procesando - NO mostrar datos hasta completar
+        self.cotizacion_detalle_processing = True
+        
+        # Limpiar datos previos
         self.cotizacion_detalle_pdf_metadata = ""
         self.cotizacion_detalle_pdf_tablas = ""
         self.cotizacion_detalle_pdf_condiciones = ""
         self.cotizacion_detalle_pdf_error = ""
         self.cotizacion_detalle_pdf_familias = ""
         self.cotizacion_detalle_pdf_familias_validacion = ""
+        
         file_id = self.cotizacion_detalle.drive_file_id
         if file_id:
             try:
@@ -48,6 +54,7 @@ class AppState(rx.State):
                 self.cotizacion_detalle_pdf_condiciones = str(data.get("condiciones", ""))
                 self.cotizacion_detalle_pdf_familias = json.dumps(data.get("familias", []), ensure_ascii=False, indent=2)
                 self.cotizacion_detalle_pdf_familias_validacion = json.dumps(data.get("familias_validacion", {}), ensure_ascii=False, indent=2)
+                
                 # Mapear metadata y familias al objeto Cot en memoria
                 meta = data.get("metadata", {}) or {}
                 numero_cot = str(meta.get("numero_cotizacion", ""))
@@ -56,6 +63,7 @@ class AppState(rx.State):
                     joined = "".join(digits)
                     self.cotizacion_detalle.num = (joined[:4] if len(joined) >= 4 else joined).zfill(4)
                     self.cotizacion_detalle.year = joined[-2:] if len(joined) >= 2 else self.cotizacion_detalle.year
+                
                 # client y otros campos directos
                 client_name = (meta.get("empresa") or "").strip()
                 if client_name:
@@ -208,8 +216,19 @@ class AppState(rx.State):
                     import traceback
                     print(f"🔍 DEBUG: Traceback completo:")
                     traceback.print_exc()
+                    
+                # 4. GUARDAR DATOS PROCESADOS EN FIRESTORE
+                try:
+                    await self._save_cotizacion_detalle_to_firestore(data, client_found)
+                except Exception as e_save:
+                    print(f"⚠️  Error al guardar datos en Firestore: {e_save}")
+                    
             except Exception as e:
                 self.cotizacion_detalle_pdf_error = str(e)
+            finally:
+                # Marcar procesamiento como completo - AHORA mostrar datos
+                self.cotizacion_detalle_processing = False
+                print("✅ Procesamiento de cotización detalle completado")
 
     @rx.event
     async def extraer_pdf_forzado(self):
@@ -283,6 +302,7 @@ class AppState(rx.State):
     is_loading_roles: bool = False
     is_loading_data: bool = False
     is_loading_cotizacion_detalle: bool = False
+    cotizacion_detalle_processing: bool = False  # Nuevo: indica si está procesando datos del PDF
     
     # Flags para evitar re-inicializaciones innecesarias
     user_initialized: bool = False
@@ -2221,3 +2241,91 @@ class AppState(rx.State):
             import traceback
             traceback.print_exc()
             return None
+    
+    async def _save_cotizacion_detalle_to_firestore(self, extracted_data: dict, client_found):
+        """
+        Guarda los datos procesados de la cotización en Firestore usando save_cotizacion_detalle
+        """
+        if not self.cotizacion_detalle.id:
+            print("⚠️  No se puede guardar: ID de cotización no disponible")
+            return
+            
+        try:
+            print(f"💾 Guardando datos procesados de cotización {self.cotizacion_detalle.id}...")
+            
+            # Preparar datos del cliente
+            client_data = {}
+            if client_found:
+                client_data = {
+                    "id": client_found.id,
+                    "razonsocial": client_found.razonsocial,
+                    "consultora": getattr(client_found, 'consultora', ''),
+                    "email_cotizacion": getattr(client_found, 'email_cotizacion', ''),
+                    "area": getattr(client_found, 'area', '')
+                }
+            else:
+                # Cliente temporal creado desde PDF
+                if hasattr(self, 'cotizacion_detalle_client') and self.cotizacion_detalle_client:
+                    client_data = {
+                        "id": "",
+                        "razonsocial": self.cotizacion_detalle_client.razonsocial,
+                        "consultora": getattr(self.cotizacion_detalle_client, 'consultora', ''),
+                        "email_cotizacion": getattr(self.cotizacion_detalle_client, 'email_cotizacion', ''),
+                        "area": ""
+                    }
+            
+            # Preparar lista de familias
+            familias_data = []
+            if hasattr(self.cotizacion_detalle, 'familys') and self.cotizacion_detalle.familys:
+                for fam in self.cotizacion_detalle.familys:
+                    if hasattr(fam, '__dict__'):
+                        familias_data.append({
+                            "id": getattr(fam, 'id', ''),
+                            "family": getattr(fam, 'family', ''),
+                            "product": getattr(fam, 'product', ''),
+                            "client": getattr(fam, 'client', ''),
+                            "client_id": getattr(fam, 'client_id', ''),
+                            "area": getattr(fam, 'area', ''),
+                            "status": getattr(fam, 'status', '')
+                        })
+            
+            # Preparar lista de trabajos
+            trabajos_data = []
+            if hasattr(self, 'cotizacion_detalle_trabajos') and self.cotizacion_detalle_trabajos:
+                trabajos_data = self.cotizacion_detalle_trabajos
+            
+            # Preparar lista de productos (si existe)
+            productos_data = []
+            if hasattr(self, 'cotizacion_detalle_productos') and self.cotizacion_detalle_productos:
+                productos_data = self.cotizacion_detalle_productos
+            
+            # Preparar metadata
+            metadata = extracted_data.get("metadata", {})
+            
+            # Preparar tablas
+            tablas = extracted_data.get("tablas", [])
+            
+            # Preparar condiciones
+            condiciones = extracted_data.get("condiciones", "")
+            
+            # Llamar a la función de firestore_api para guardar
+            success = firestore_api.save_cotizacion_detalle(
+                cotizacion_id=self.cotizacion_detalle.id,
+                client_data=client_data,
+                familias=familias_data,
+                trabajos=trabajos_data,
+                productos=productos_data,
+                metadata=metadata,
+                tables=tablas,
+                condiciones=condiciones
+            )
+            
+            if success:
+                print(f"✅ Datos procesados guardados exitosamente en cotizaciones/{self.cotizacion_detalle.id}/detalle")
+            else:
+                print(f"❌ Error al guardar datos procesados")
+                
+        except Exception as e:
+            print(f"❌ Error en _save_cotizacion_detalle_to_firestore: {e}")
+            import traceback
+            traceback.print_exc()

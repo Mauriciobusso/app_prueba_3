@@ -187,6 +187,11 @@ def cotizacion_detalle_view() -> rx.Component:
             "Cargando cotización...",
             AppState.is_loading_cotizacion_detalle
         ),
+        # Overlay de procesamiento para cotización detalle
+        loading_overlay(
+            "Procesando datos del PDF...",
+            AppState.cotizacion_detalle_processing
+        ),
         navbar(title="Detalle de Cotización"),
         rx.box(
             rx.vstack(
@@ -210,9 +215,9 @@ def cotizacion_detalle_view() -> rx.Component:
                     href="/cotizaciones"
                 ),
                 
-                # Tarjeta con detalles de la cotización - Solo mostrar cuando NO esté cargando Y tenga datos
+                # Tarjeta con detalles de la cotización - Solo mostrar cuando NO esté cargando Y NO esté procesando Y tenga datos
                 rx.cond(
-                    (AppState.cotizacion_detalle.id != "") & (~AppState.is_loading_cotizacion_detalle),
+                    (AppState.cotizacion_detalle.id != "") & (~AppState.is_loading_cotizacion_detalle) & (~AppState.cotizacion_detalle_processing),
                     rx.card(
                         rx.vstack(
                             # Título
@@ -421,7 +426,7 @@ def cotizacion_detalle_view() -> rx.Component:
                                     ),
                                     # Fallback: usar familias mapeadas - Solo mostrar cuando NO esté cargando
                                     rx.cond(
-                                        (AppState.cotizacion_detalle_familys_count > 0) & (~AppState.is_loading_cotizacion_detalle),
+                                        (AppState.cotizacion_detalle_familys_count > 0) & (~AppState.is_loading_cotizacion_detalle) & (~AppState.cotizacion_detalle_processing),
                                         rx.foreach(
                                             AppState.cotizacion_detalle.familys,
                                             lambda f: rx.text(
@@ -457,7 +462,7 @@ def cotizacion_detalle_view() -> rx.Component:
                             # Tabla de trabajos extraídos del PDF - Solo mostrar cuando NO esté cargando
                             rx.vstack(
                                 rx.cond(
-                                    (AppState.cotizacion_detalle_trabajos_count > 0) & (~AppState.is_loading_cotizacion_detalle),
+                                    (AppState.cotizacion_detalle_trabajos_count > 0) & (~AppState.is_loading_cotizacion_detalle) & (~AppState.cotizacion_detalle_processing),
                                     rx.foreach(
                                         AppState.cotizacion_detalle_descripcion_trabajos,
                                         lambda t: rx.hstack(
