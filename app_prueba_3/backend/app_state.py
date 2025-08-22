@@ -5,6 +5,7 @@ import os, json
 from dotenv import load_dotenv
 from ..api.firestore_api import firestore_api
 from ..api.algolia_api import algolia_api
+from ..api import cotizacion_extractor
 from ..api.algolia_utils import algolia_to_cot, algolia_to_certs, algolia_to_fam
 from ..utils import User, Fam, Certs, Cot, Client, buscar_fams, buscar_cots
 from datetime import datetime
@@ -21,6 +22,17 @@ firestore_queue = asyncio.Queue()
 
 
 class AppState(rx.State):
+    def add_empresa_temporal(self):
+        # Aquí puedes agregar la lógica para crear una empresa temporal o simplemente dejarlo como placeholder
+        print("Empresa temporal agregada (placeholder)")
+    def set_new_cot_empresa(self, value: str):
+        self.new_cot_razonsocial = value
+    @rx.event
+    async def update_activity(self):
+        """Actualiza el timestamp de última actividad para mantener la sesión activa."""
+        import time
+        if self.session_internal:
+            self.set_last_activity(time.time())
     # Datos extraídos del PDF de la cotización seleccionada
     cotizacion_detalle_pdf_metadata: str = ""
     cotizacion_detalle_pdf_tablas: str = ""
@@ -44,6 +56,33 @@ class AppState(rx.State):
         self.cotizacion_detalle_pdf_error = ""
         self.cotizacion_detalle_pdf_familias = ""
         self.cotizacion_detalle_pdf_familias_validacion = ""
+        
+        # 1. VERIFICAR SI YA EXISTEN DATOS PROCESADOS EN FIRESTORE (solo si no es reprocesamiento forzado)
+        if self.cotizacion_detalle.id and not self.force_pdf_reprocess:
+            try:
+                print(f"🔍 Verificando si existen datos procesados para cotización {self.cotizacion_detalle.id}...")
+                existing_data = firestore_api.get_cotizacion_detalle(self.cotizacion_detalle.id)
+                
+                if existing_data and isinstance(existing_data, dict):
+                    print(f"✅ Datos ya procesados encontrados en Firestore. Cargando desde base de datos...")
+                    
+                    # Cargar datos desde Firestore en lugar de procesar PDF
+                    await self._load_from_firestore_detalle(existing_data)
+                    
+                    # Marcar procesamiento como completo
+                    self.cotizacion_detalle_processing = False
+                    print("✅ Datos cargados desde Firestore sin procesar PDF")
+                    return
+                else:
+                    print(f"🔄 No existen datos procesados. Procediendo a procesar PDF...")
+                    
+            except Exception as e_check:
+                print(f"⚠️  Error verificando datos existentes: {e_check}")
+                print(f"🔄 Continuando con procesamiento de PDF...")
+        elif self.force_pdf_reprocess:
+            print("🔥 REPROCESAMIENTO FORZADO: Saltando verificación de cache y reprocesando PDF...")
+            # Resetear el flag después de usarlo
+            self.force_pdf_reprocess = False
         
         file_id = self.cotizacion_detalle.drive_file_id
         if file_id:
@@ -228,12 +267,16 @@ class AppState(rx.State):
             finally:
                 # Marcar procesamiento como completo - AHORA mostrar datos
                 self.cotizacion_detalle_processing = False
+                self.is_loading_cotizacion_detalle = False  # También finalizar estado de carga
                 print("✅ Procesamiento de cotización detalle completado")
 
     @rx.event
     async def extraer_pdf_forzado(self):
         """Fuerza una nueva extracción del PDF ignorando el caché."""
         print("🔄 Forzando extracción de PDF ignorando caché...")
+        
+        # Activar flag para saltarse verificación de cache
+        self.force_pdf_reprocess = True
         
         # Marcar que no está cargado desde cache para forzar procesamiento completo
         if hasattr(self.cotizacion_detalle, 'loaded_from_cache'):
@@ -323,49 +366,112 @@ class AppState(rx.State):
     cotizacion_detalle_client: Client = Client()  # Cliente encontrado o creado desde la cotización
     cotizacion_detalle_current_id: str = ""  # ID de la cotización actualmente cargada
     
+    # Estado de procesamiento y progreso
+    upload_progress: int = 0
+    error_message: str = ""
+    success_message: str = ""
+    force_pdf_reprocess: bool = False  # Flag para forzar reprocesamiento ignorando cache
+
     # Datos extraídos del PDF de la cotización seleccionada
     cotizacion_detalle_pdf_metadata: str = ""
     cotizacion_detalle_pdf_tablas: str = ""
     cotizacion_detalle_pdf_condiciones: str = ""
     cotizacion_detalle_pdf_error: str = ""
+    cotizacion_detalle_pdf_familias: str = ""
+    cotizacion_detalle_pdf_familias_validacion: str = ""
+    
+    # Datos procesados adicionales para la cotización
+    cotizacion_detalle_trabajos: list = []
+    cotizacion_detalle_productos: list = []
 
     # Campo de texto de búsqueda temporal (no ejecuta búsqueda automáticamente)
     search_text: str = ""
     
     # --- Campos temporales para crear nueva cotización (UI form) ---
-    new_cot_number: str = ""
+    new_cot_num: str = ""
+    new_cot_year: str = ""
+
+    def set_new_cot_num(self, value: str):
+        self.new_cot_num = value
+
+    def set_new_cot_year(self, value: str):
+        self.new_cot_year = value
+    
+    def set_new_cot_fecha(self, value: str):
+        self.new_cot_issuedate = value
+
+    def set_new_cot_nombre(self, value: str):
+        self.new_cot_nombre = value
+
+    def set_new_cot_consultora(self, value: str):
+        self.new_cot_consultora = value
+
+    def set_new_cot_facturar(self, value: str):
+        self.new_cot_facturar = value
+
+    def set_new_cot_mail(self, value: str):
+        self.new_cot_mail = value
+
     new_cot_issuedate: str = ""
     new_cot_razonsocial: str = ""
     new_cot_nombre: str = ""
     new_cot_consultora: str = "BV"
     new_cot_facturar: str = ""
     new_cot_mail: str = ""
-    new_cot_familias: list[str] = []
+    new_cot_resolucion: str = ""
+    new_cot_pdf_condiciones: str = ""
+    new_cot_rev: str = ""
+    new_cot_mail: str = ""
+    new_cot_familias: list[Fam] = []
     new_cot_trabajos: list[dict] = []
     new_cot_status: str = ""  # '', 'success', 'error'
     new_cot_error_message: str = ""
     
+    # Lista de trabajos disponibles para seleccionar
+    trabajos_disponibles: list = []
+    is_loading_trabajos: bool = False
+    # Estado de Carga de Datos Iniciales Nueva Cotización
+    is_loading_new_cot: bool = False
+
     # New cotization form methods
     def add_new_cot_family(self):
         """Add new family to the new cotization form."""
-        self.new_cot_familias.append("")
+        self.new_cot_familias.append(Fam())
 
     def set_new_cot_family(self, index: int, value: str):
         """Set family value at specific index."""
         if 0 <= index < len(self.new_cot_familias):
-            self.new_cot_familias[index] = value
+            self.new_cot_familias[index].family = value
 
-    def remove_new_cot_family(self, index: int):
-        """Remove family at specific index."""
+    def set_new_cot_product(self, index: int, value: str):
+        """Set product value at specific index."""
         if 0 <= index < len(self.new_cot_familias):
-            self.new_cot_familias.pop(index)
+            self.new_cot_familias[index].product = value
+
+    def remove_new_cot_family(self, family_to_remove):
+        """Remove family from the list."""
+        # Si es un diccionario (evento), ignoramos
+        if isinstance(family_to_remove, dict):
+            print("Intento de eliminar familia inválido (dict)")
+            return
+        
+        # Si es un objeto Fam, lo buscamos y removemos
+        if isinstance(family_to_remove, Fam):
+            try:
+                self.new_cot_familias.remove(family_to_remove)
+                print(f"✅ Familia eliminada: {family_to_remove}")
+            except ValueError:
+                pass  # El elemento no está en la lista
+        # Si es un índice (int), lo usamos directamente
+        elif isinstance(family_to_remove, int) and 0 <= family_to_remove < len(self.new_cot_familias):
+            self.new_cot_familias.pop(family_to_remove)
 
     def add_new_cot_trabajo(self):
         """Add new trabajo to the new cotization form."""
         self.new_cot_trabajos.append({
+            'titulo': '',
             'descripcion': '',
-            'cantidad': '',
-            'descuento': '',
+            'cantidad': '1',
             'precio': ''
         })
 
@@ -374,10 +480,55 @@ class AppState(rx.State):
         if 0 <= index < len(self.new_cot_trabajos):
             self.new_cot_trabajos[index][field] = value
 
-    def remove_new_cot_trabajo(self, index: int):
-        """Remove trabajo at specific index."""
+    def set_new_cot_trabajo_from_template(self, index: int, trabajo_id: str):
+        """Set trabajo from template/available trabajo."""
         if 0 <= index < len(self.new_cot_trabajos):
-            self.new_cot_trabajos.pop(index)
+            # Find the trabajo by id
+            trabajo_found = None
+            for trabajo in self.trabajos_disponibles:
+                if trabajo.get('id') == trabajo_id:
+                    trabajo_found = trabajo
+                    break
+            
+            if trabajo_found:
+                self.new_cot_trabajos[index]['titulo'] = trabajo_found.get('titulo', '')
+                self.new_cot_trabajos[index]['descripcion'] = trabajo_found.get('descripcion', '')
+                # Keep existing cantidad and precio
+                if not self.new_cot_trabajos[index].get('cantidad'):
+                    self.new_cot_trabajos[index]['cantidad'] = '1'
+
+    def remove_new_cot_trabajo(self, trabajo_to_remove):
+        """Remove trabajo from the list."""
+        # Si es un diccionario (evento), ignoramos
+        if isinstance(trabajo_to_remove, dict) and 'type' in trabajo_to_remove:
+            return
+        
+        # Si es un diccionario de trabajo, lo buscamos y removemos
+        if isinstance(trabajo_to_remove, dict):
+            try:
+                self.new_cot_trabajos.remove(trabajo_to_remove)
+            except ValueError:
+                pass  # El elemento no está en la lista
+        # Si es un índice (int), lo usamos directamente
+        elif isinstance(trabajo_to_remove, int) and 0 <= trabajo_to_remove < len(self.new_cot_trabajos):
+            self.new_cot_trabajos.pop(trabajo_to_remove)
+
+    @rx.event(background=True)
+    async def load_new_cot(self):
+        """Load available trabajos from Firestore."""
+        async with self:
+            self.is_loading_new_cot = True
+            self.is_loading_trabajos = True
+            
+        try:
+            async with self:
+                await self.reset_new_cot_form()
+                self.is_loading_trabajos = False
+                
+        except Exception as e:
+            print(f"❌ Error al cargar trabajos disponibles: {e}")
+            async with self:
+                self.is_loading_trabajos = False
 
     def submit_new_cot(self):
         """Submit new cotization form."""
@@ -408,10 +559,27 @@ class AppState(rx.State):
             self.new_cot_status = "error"
             self.new_cot_error_message = f"Error al crear cotización: {str(e)}"
 
-    def reset_new_cot_form(self):
+    async def reset_new_cot_form(self):
         """Reset the new cotization form."""
-        self.new_cot_number = ""
-        self.new_cot_issuedate = ""
+        # Get proximo numero de cotizacion (función sincrónica)
+        try:
+            next_num = cotizacion_extractor.get_next_cotizacion_number(datetime.now().year, self.cots)
+        except Exception:
+            # Fallback en caso de error
+            next_num = "0001"
+        year_str = str(datetime.now().year)[-2:]
+
+
+        # Get trabajos from current user area (función sincrónica)
+        try:
+            trabajos = firestore_api.get_trabajos()
+        except Exception:
+            trabajos = []
+
+        self.new_cot_issuedate = datetime.now().strftime('%d/%m/%Y')  # Fecha de hoy con formato dd/MM/YYYY
+        self.new_cot_num = next_num
+        self.new_cot_year = year_str
+        self.trabajos_disponibles = trabajos
         self.new_cot_razonsocial = ""
         self.new_cot_nombre = ""
         self.new_cot_consultora = ""
@@ -1042,7 +1210,14 @@ class AppState(rx.State):
     async def cargar_cotizacion_detalle(self):
         """Carga los detalles de una cotización específica usando el parámetro de ruta."""
         try:
-            # Obtener el parámetro cot_id de la URL actual usando la nueva API
+            # 1. LIMPIAR CACHE ANTERIOR INMEDIATAMENTE para evitar mostrar datos erróneos
+            print("🧹 Limpiando datos anteriores antes de cargar nueva cotización...")
+            self._limpiar_cache_cotizacion_detalle()
+            
+            # 2. FORZAR ACTUALIZACIÓN DE ESTADO para limpiar UI inmediatamente
+            yield  # Forzar actualización del estado antes de continuar
+            
+            # 3. Obtener el parámetro cot_id de la URL actual usando la nueva API
             cot_id = ""
             try:
                 # Usar la nueva API de router
@@ -1090,12 +1265,20 @@ class AppState(rx.State):
             
             self.cotizacion_detalle = cotizacion_encontrada
             print(f"✅ Cotización detalle cargada: {cotizacion_encontrada.num}-{cotizacion_encontrada.year} (ID: {cot_id})")
+            
             # Extraer PDF si hay archivo asociado
             await self.extraer_pdf_cotizacion_detalle()
+            
+            # ASEGURAR que loading esté desactivado al final (por si no se procesó PDF o falló)
+            if self.is_loading_cotizacion_detalle:
+                self.is_loading_cotizacion_detalle = False
+                print("✅ Estado de carga finalizado")
             
         except Exception as e:
             print(f"❌ Error al cargar cotización detalle: {e}")
             self.cotizacion_detalle = Cot()
+            # Asegurar que loading esté desactivado en caso de error
+            self.is_loading_cotizacion_detalle = False
     
     @rx.var
     def cotizacion_detalle_fecha_formateada(self) -> str:
@@ -2329,3 +2512,177 @@ class AppState(rx.State):
             print(f"❌ Error en _save_cotizacion_detalle_to_firestore: {e}")
             import traceback
             traceback.print_exc()
+    
+    def _limpiar_cache_cotizacion_detalle(self):
+        """Limpia el cache de cotización detalle para evitar mostrar datos erróneos."""
+        print("🧹 Limpiando cache de cotización detalle...")
+        
+        # MARCAR COMO CARGANDO INMEDIATAMENTE para ocultar datos antiguos
+        self.is_loading_cotizacion_detalle = True
+        
+        # Limpiar la cotización actual
+        self.cotizacion_detalle = Cot()
+        
+        # Limpiar cliente relacionado
+        self.cotizacion_detalle_client = Client()
+        self.cotizacion_detalle_current_id = ""
+        
+        # Resetear estados relacionados
+        self.cotizacion_detalle_processing = False
+        self.upload_progress = 0
+        self.error_message = ""
+        self.success_message = ""
+        self.force_pdf_reprocess = False
+            
+        # Limpiar metadata y tablas procesadas
+        self.cotizacion_detalle_pdf_metadata = ""
+        self.cotizacion_detalle_pdf_tablas = ""
+        self.cotizacion_detalle_pdf_condiciones = ""
+        self.cotizacion_detalle_pdf_error = ""
+        self.cotizacion_detalle_pdf_familias = ""
+        self.cotizacion_detalle_pdf_familias_validacion = ""
+        
+        # Limpiar datos procesados adicionales
+        self.cotizacion_detalle_trabajos = []
+        self.cotizacion_detalle_productos = []
+        
+        print("✅ Cache de cotización detalle limpiado correctamente")
+    
+    def _firestore_to_json_safe(self, obj):
+        """
+        Convierte objetos de Firestore a formato JSON serializable
+        """
+        import datetime
+        
+        def json_serializer(obj):
+            """Serializador personalizado para objetos de Firestore"""
+            # Verificar diferentes tipos de objetos datetime de Firestore
+            if hasattr(obj, 'isoformat') and hasattr(obj, '__class__'):
+                class_name = obj.__class__.__name__
+                # Manejar DatetimeWithNanoseconds y otros objetos datetime de Firestore
+                if 'Datetime' in class_name or isinstance(obj, datetime.datetime):
+                    return obj.isoformat()
+            elif isinstance(obj, dict):
+                # Recursivamente procesar diccionarios
+                return {k: json_serializer(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                # Recursivamente procesar listas
+                return [json_serializer(item) for item in obj]
+            # Para otros tipos, intentar serializar directamente
+            try:
+                import json
+                json.dumps(obj)  # Test if it's already serializable
+                return obj
+            except (TypeError, ValueError):
+                # Si no es serializable, convertir a string
+                return str(obj)
+        
+        # Procesar el objeto y convertir a JSON
+        try:
+            processed_obj = json_serializer(obj)
+            return json.dumps(processed_obj, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"⚠️ Error en serialización JSON: {e}")
+            # Fallback: convertir todo el objeto a string
+            return json.dumps(str(obj), ensure_ascii=False, indent=2)
+    
+    async def _load_from_firestore_detalle(self, firestore_data: dict):
+        """
+        Carga datos procesados desde Firestore en lugar de procesar PDF
+        """
+        try:
+            print(f"📥 Cargando datos procesados desde Firestore...")
+            
+            # Cargar metadata usando el serializador seguro
+            metadata = firestore_data.get("metadata", {})
+            self.cotizacion_detalle_pdf_metadata = self._firestore_to_json_safe(metadata)
+            
+            # Cargar tablas usando el serializador seguro
+            tables = firestore_data.get("tables", [])
+            self.cotizacion_detalle_pdf_tablas = self._firestore_to_json_safe(tables)
+            
+            # Cargar condiciones
+            condiciones = firestore_data.get("condiciones", "")
+            self.cotizacion_detalle_pdf_condiciones = str(condiciones)
+            
+            # Cargar familias usando el serializador seguro
+            familias_data = firestore_data.get("familias", [])
+            self.cotizacion_detalle_pdf_familias = self._firestore_to_json_safe(familias_data)
+            
+            # Procesar cliente desde datos guardados
+            client_data = firestore_data.get("client", {})
+            if client_data:
+                client_name = client_data.get("razonsocial", "")
+                if client_name:
+                    self.cotizacion_detalle.client = client_name
+                    
+                    # Crear objeto cliente desde datos guardados
+                    from ..utils import Client
+                    self.cotizacion_detalle_client = Client(
+                        id=client_data.get("id", ""),
+                        razonsocial=client_data.get("razonsocial", ""),
+                        consultora=client_data.get("consultora", ""),
+                        email_cotizacion=client_data.get("email_cotizacion", ""),
+                        area=client_data.get("area", "")
+                    )
+                    self.cotizacion_detalle.client_id = client_data.get("id", "")
+            
+            # Cargar familias procesadas
+            familias_list = []
+            for fam_data in familias_data:
+                if isinstance(fam_data, dict):
+                    from ..utils import Fam
+                    fam_obj = Fam(
+                        id=fam_data.get("id", ""),
+                        family=fam_data.get("family", ""),
+                        product=fam_data.get("product", ""),
+                        client=fam_data.get("client", ""),
+                        client_id=fam_data.get("client_id", ""),
+                        area=fam_data.get("area", ""),
+                        status=fam_data.get("status", "")
+                    )
+                    familias_list.append(fam_obj)
+            
+            self.cotizacion_detalle.familys = familias_list
+            self.cotizacion_detalle.familys_ids = [fam.id for fam in familias_list if fam.id]
+            
+            # Cargar trabajos
+            trabajos_data = firestore_data.get("trabajos", [])
+            self.cotizacion_detalle_trabajos = trabajos_data
+            
+            # Cargar productos
+            productos_data = firestore_data.get("productos", [])
+            self.cotizacion_detalle_productos = productos_data
+            
+            # Actualizar metadata en cotización
+            if metadata:
+                numero_cot = str(metadata.get("numero_cotizacion", ""))
+                import re
+                digits = re.findall(r"\d+", numero_cot)
+                if digits:
+                    joined = "".join(digits)
+                    self.cotizacion_detalle.num = (joined[:4] if len(joined) >= 4 else joined).zfill(4)
+                    self.cotizacion_detalle.year = joined[-2:] if len(joined) >= 2 else self.cotizacion_detalle.year
+                
+                if metadata.get("fecha"):
+                    self.cotizacion_detalle.issuedate = metadata.get("fecha")
+                if metadata.get("dirigido_a"):
+                    self.cotizacion_detalle.nombre = metadata.get("dirigido_a").strip()
+                if metadata.get("consultora"):
+                    self.cotizacion_detalle.consultora = metadata.get("consultora").strip()
+                if metadata.get("mail_receptor"):
+                    self.cotizacion_detalle.email = metadata.get("mail_receptor").strip()
+                if metadata.get("revision"):
+                    self.cotizacion_detalle.rev = str(metadata.get("revision")).strip()
+            
+            print(f"✅ Datos cargados desde Firestore: {len(familias_list)} familias, {len(trabajos_data)} trabajos")
+            
+            # MARCAR CARGA COMO COMPLETADA
+            self.is_loading_cotizacion_detalle = False
+            
+        except Exception as e:
+            print(f"❌ Error cargando datos desde Firestore: {e}")
+            import traceback
+            traceback.print_exc()
+            # También marcar como completado en caso de error
+            self.is_loading_cotizacion_detalle = False

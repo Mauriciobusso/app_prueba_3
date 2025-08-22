@@ -5,8 +5,7 @@ import asyncio
 
 from .styles.style import *
 from .components.react_oauth_google import GoogleOAuthProvider, GoogleLogin
-from .views.authenticated import certificados_view, familias_view, cotizaciones_view, cotizacion_detalle_view
-from .views.authenticated import cotizacion_new_view
+from .views.authenticated import certificados_view, familias_view, cotizaciones_view, cotizacion_detalle_view, nueva_cotizacion_view
 from .backend.app_state import AppState
 
 from .components.components import table_certificados, table_familias
@@ -144,4 +143,4 @@ app.add_page(certificados, route="/certificados", on_load=AppState.on_mount_cert
 app.add_page(familias, route="/familias", on_load=AppState.on_mount_familias)
 app.add_page(cotizaciones, route="/cotizaciones", on_load=AppState.on_mount_cotizaciones)
 app.add_page(cotizacion_detalle, route="/cotizaciones/[cot_id]", on_load=AppState.cargar_cotizacion_detalle)
-app.add_page(cotizacion_new_view, route="/cotizaciones/new", on_load=AppState.on_mount_cotizaciones)
+app.add_page(nueva_cotizacion_view, route="/cotizaciones/new", on_load=AppState.on_mount_cotizaciones)

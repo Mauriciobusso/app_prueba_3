@@ -6,6 +6,8 @@ from typing import List, Dict, Any
 from dotenv import load_dotenv
 
 from algoliasearch.search.client import SearchClient
+import asyncio
+import inspect
 
 # Cargar variables de entorno desde .env
 load_dotenv()
@@ -245,9 +247,23 @@ class AlgoliaAPI:
                 # Nota: Algunas versiones de algoliasearch pueden devolver un coroutine
                 # Si save_objects devuelve coroutine, necesitamos await en contexto async
                 result = admin_client.save_objects(index_name, batch, {'autoGenerateObjectIDIfNotExist': True})
-                # Si es un coroutine, imprimir warning y continuar
-                if hasattr(result, '__await__'):
-                    print("⚠️ save_objects devolvió coroutine - versión de Algolia requiere await")
+                # Si save_objects devuelve un coroutine/future, ejecutarlo/awaitearlo correctamente
+                try:
+                    is_awaitable = inspect.isawaitable(result) or hasattr(result, '__await__') or isinstance(result, asyncio.Future)
+                    if is_awaitable:
+                        # Ejecutar la coroutine en un hilo separado para garantizar que se awaitée
+                        from threading import Thread
+
+                        def _run_coro():
+                            try:
+                                asyncio.run(result)
+                            except Exception as e_run:
+                                print(f"⚠️ Error al ejecutar save_objects en hilo: {e_run}")
+
+                        t = Thread(target=_run_coro, daemon=True)
+                        t.start()
+                except Exception as e_await:
+                    print(f"⚠️ Error detectando/ejecutando save_objects de Algolia: {e_await}")
                 
             print(f"✅ {len(records)} registros indexados en '{index_name}'")
             return True

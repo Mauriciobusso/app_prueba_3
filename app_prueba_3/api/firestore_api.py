@@ -858,6 +858,46 @@ class FirestoreAPI:
             print(f"❌ Error al obtener plantillas de trabajo: {e}")
             return []
     
+    def get_trabajos(self) -> list:
+        """
+        Obtiene los trabajos desde la colección 'Trabajo'.
+        
+        Args:
+            limit (int): Límite de resultados
+        
+        Returns:
+            list: Lista de trabajos con campos 'titulo' y 'descripcion'
+        """
+        if not self.firebase_initialized:
+            print("⚠️  Firebase no inicializado. Retornando lista vacía.")
+            return []
+        
+        try:
+            # Crear query base - simplificada para evitar el índice por ahora
+            query = self.db.collection("Trabajo")
+            
+            # Por ahora omitir el filtro por área hasta crear el índice
+            # if area:
+            #     query = query.where("area", "==", area)
+            
+            # Ordenar por título y limitar resultados
+            query = query.order_by("Titulo")
+            
+            docs = query.get()
+            trabajos = []
+            
+            for doc in docs:
+                data = doc.to_dict()
+                data["id"] = doc.id
+                trabajos.append(data)
+            
+            print(f"✅ {len(trabajos)} trabajos encontrados")
+            return trabajos
+            
+        except Exception as e:
+            print(f"❌ Error al obtener trabajos: {e}")
+            return []
+    
     def get_next_cotizacion_number(self, area: str, year: str = None) -> dict:
         """
         Obtiene el siguiente número de cotización para un área específica.
